@@ -42,66 +42,63 @@ void not_found(int socket);
 void catch_ctrlc(int);
 void cannot_execute(int socket);
 
+void setAllowedFiles(char* str, char arr[MAX_ALLOWED][SIZE_BUF]);
+void printInvalidConfigFile(void);
+void readParam(FILE *file);
+
 char buf[SIZE_BUF];
 char req_buf[SIZE_BUF];
 char buf_tmp[SIZE_BUF];
 int port,socket_conn,new_conn;
 
-
 int main(int argc, char ** argv) {
 	struct sockaddr_in client_name;
 	socklen_t client_name_len = sizeof(client_name);
-	char c;
-	int i;
-	int count = 0;
-	/* CONFIG FILE DATA */
+	// CONFIG FILE DATA
 	int port;
-	//char scheduling[SIZE_BUF];
-	//int threadpool;
-	//char allowed[MAX_ALLOWED][SIZE_BUF];
+	char scheduling[SIZE_BUF];
+	int threadpool;
+	char allowed[MAX_ALLOWED][SIZE_BUF];
 
 	/* NEW */
 	FILE *config = fopen("config.txt","r");
-
-	if(config == NULL)
-   {
-      printf("Error in config file");
-      exit(1);
-   }
+	if(config == NULL) printInvalidConfigFile();
 
 	 // Read port
-	 //TO DO -> Create function based on the loop
-	 i=-1;
-	 do {
-      c = fgetc(config);
-      if( feof(config) || c=='\n' ) {
-				if(count==0) {
-					printf("Missing assignment = sign in port attribution in the config file\nConfig file must be of the following format:\n\n");
-					printf("SERVERPORT=(port) -> Example:1234\n");
-					printf("SCHEDULING=(schedule type) -> Example:NORMAL\n");
-					printf("THREADPOOL=(number of threads) -> Example:5\n");
-					printf("ALLLOWED=(allowed file names seperated by ; sign) -> file_a.html;file_b.html\n");
-					printf("\nOnly .html and .hmtl.gz files supported\n");
-					exit(1);
-				}
-				buf[++i]='\0';
-				count = 0;
-        break ;
-      }
-			if(count == 1) buf[++i]=c;
-			if(c=='=') count=1;
-   } while(1);
-
+	 readParam(config);
 	 //TO DO -> create isNumber function
 	 /*if( !isNumber(buf) ) {
 		 printf("Invalid port value\n");
 		 exit(1);
 	 }*/
-
 	 port=atoi(buf);
-	 printf("%i\n",port);
+	 printf("port: %i\n",port);
 
+	 //Read scheduling
+	 readParam(config);
+	 //TO DO -> create validScheduling function
+	 /*if( !validScheduling(buf) ) {
+		 printf("Invalid scheduling mode");
+		 exit(1);
+ 	 }*/
+	 strcpy(scheduling,buf);
+	 printf("scheduling: %s\n", scheduling);
 
+	 //Read threadpool
+	 readParam(config);
+	 //TO DO -> create validScheduling function
+	 /*if( !isNumber(buf) ) {
+		 printf("Invalid number of threads\n");
+		 exit(1);
+	 }*/
+	 threadpool = atoi(buf);
+	 printf("threadpool: %d\n", threadpool);
+
+	 //Read allowed files
+	 readParam(config);
+	 strcpy(buf_tmp,buf);
+	 setAllowedFiles(buf_tmp, allowed);
+	 printf("Allowed files: %s; %s\n", allowed[0], allowed[1]);
 
 	fclose(config);
 	/* END NEW */
@@ -148,6 +145,57 @@ int main(int argc, char ** argv) {
 	}
 
 }
+
+// Read value of property from config file
+void readParam(FILE *file) {
+	int i=0;
+	char c;
+	int count = 0;
+
+	do {
+		 c = fgetc(file);
+		 if( feof(file) || c=='\n' ) {
+			 if(count==0) {
+				 printInvalidConfigFile();
+			 }
+			 buf[i++]='\0';
+			 count = 0;
+			 break ;
+		 }
+		 if(count == 1) buf[i++]=c;
+		 if(c=='=') count=1;
+	} while(1);
+}
+
+// Print invalid config file and exit
+void printInvalidConfigFile(void) {
+	printf("Missing assignment = sign in port attribution in the config file\nConfig file must be of the following format:\n\n");
+	printf("SERVERPORT=(port) -> Example:1234\n");
+	printf("SCHEDULING=(schedule type) -> Example:NORMAL\n");
+	printf("THREADPOOL=(number of threads) -> Example:5\n");
+	printf("ALLLOWED=(allowed file names seperated by ; sign) -> file_a.html;file_b.html\n");
+	printf("\nOnly .html and .hmtl.gz files supported\n");
+	exit(1);
+}
+
+// Set array of strings from string
+void setAllowedFiles(char* str, char arr[MAX_ALLOWED][SIZE_BUF]) {
+	//TRY OUT -> use str[++i]
+	int i=0,j=0,a=0;
+	while(str[i]!='\0') {
+		if(str[i]==';') {
+			buf[j]='\0';
+			strcpy(arr[a++],buf);
+			j=0;
+		} else {
+			buf[j++]= str[i];
+		}
+		++i;
+	}
+	buf[j]='\0';
+	strcpy(arr[a],buf);
+}
+
 
 // Processes request from client
 void get_request(int socket) {

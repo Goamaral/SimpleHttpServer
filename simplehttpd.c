@@ -1,8 +1,6 @@
 /*
- * -- simplehttpd.c --
- * A (very) simple HTTP server
- *
- * Sistemas Operativos 2014/2015
+ Run as: gcc simplehttpd.c semlib.c -lpthread -D_REENTRANT -Wall -o run
+
  */
 
 #include <stdio.h>
@@ -17,6 +15,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <time.h>
+#include "semlib.h"
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <sys/types.h>
 
 // Produce debug information
 #define DEBUG	  	1
@@ -42,25 +47,61 @@ void not_found(int socket);
 void catch_ctrlc(int);
 void cannot_execute(int socket);
 
+void statistics(void);
+void serve(void);
 void setAllowedFiles(char* str, char arr[MAX_ALLOWED][SIZE_BUF]);
 void printInvalidConfigFile(void);
 void readParam(FILE *file);
 
+//TO DO -> criar estrutura de dados para os requests
+/*
+	-	int new_conn;
+	- char requireFile[SIZE_BUF];
+	- Hora de recepcao
+	- Hora de terminacao de servir o pedido
+	- next
+	- prev
+*/
+
 char buf[SIZE_BUF];
 char req_buf[SIZE_BUF];
 char buf_tmp[SIZE_BUF];
-int port,socket_conn,new_conn;
+int socket_conn,new_conn;
+// CONFIG FILE DATA
+int port;
+char allowed[MAX_ALLOWED][SIZE_BUF];
+char scheduling[SIZE_BUF];
+int threadpool;
+//SEMAPHORES IDS
+int shmid, semid;
+//SHARED MEMORY
+//TO DO -> change shared_var to struct
+int *shared_var;
+//THREADS AND ID ARRAYS
+long id[threadpool];
+pthread_t threads[threadpool];
+//STATISTICS PROCESS PID
+pid_t statistics_PID;
 
 int main(int argc, char ** argv) {
+	int i;
 	struct sockaddr_in client_name;
 	socklen_t client_name_len = sizeof(client_name);
-	// CONFIG FILE DATA
-	int port;
-	char scheduling[SIZE_BUF];
-	int threadpool;
-	char allowed[MAX_ALLOWED][SIZE_BUF];
 
-	/* NEW */
+	//CREATE STATISTICS PROCESS
+	if( (statistics_PID=fork()) == 0) {
+			statistics();
+			exit(0);
+	} else printf("Main PID: %d\n", getpid());
+
+	//FIX
+	//SHARED MEMORY INITIALIZATION
+	shmid = shmget(IPC_PRIVATE,sizeof(int),IPC_CREAT|0766);
+	shared_var = shmat(shmid, NULL, 0);
+	semid = sem_get(1,1);
+	(*shared_var)=100;
+
+	//READ CONFIG FILE
 	FILE *config = fopen("config.txt","r");
 	if(config == NULL) printInvalidConfigFile();
 
@@ -72,7 +113,9 @@ int main(int argc, char ** argv) {
 		 exit(1);
 	 }*/
 	 port=atoi(buf);
+	 #if DEBUG
 	 printf("port: %i\n",port);
+	 #endif
 
 	 //Read scheduling
 	 readParam(config);
@@ -82,7 +125,9 @@ int main(int argc, char ** argv) {
 		 exit(1);
  	 }*/
 	 strcpy(scheduling,buf);
+	 #if DEBUG
 	 printf("scheduling: %s\n", scheduling);
+	 #endif
 
 	 //Read threadpool
 	 readParam(config);
@@ -92,25 +137,30 @@ int main(int argc, char ** argv) {
 		 exit(1);
 	 }*/
 	 threadpool = atoi(buf);
+	 #if DEBUG
 	 printf("threadpool: %d\n", threadpool);
+	 #endif
 
 	 //Read allowed files
 	 readParam(config);
 	 strcpy(buf_tmp,buf);
 	 setAllowedFiles(buf_tmp, allowed);
+	 #if DEBUG
 	 printf("Allowed files: %s; %s\n", allowed[0], allowed[1]);
+	 #endif
 
 	fclose(config);
-	/* END NEW */
+
+	//INTIALIZE THREADPOOL
+	for (i = 0; i < threadpool; i++) {
+		id[i] = i;
+		pthread_create(&threads[i], NULL, serve, (void *)&id[i]);
+		printf("Thread %d created\n", i);
+  }
 
 	signal(SIGINT,catch_ctrlc);
 
-	// Verify number of arguments
-	if (argc!=2) {
-		printf("Usage: %s <port>\n",argv[0]);
-		exit(1);
-	}
-	//REMOVED port=atoi(argv[1]);
+	//FIRE UP THE A SERVER CONNECTION
 	printf("Listening for HTTP requests on port %d\n",port);
 
 	// Configure listening port
@@ -131,7 +181,9 @@ int main(int argc, char ** argv) {
 
 		// Process request
 		get_request(new_conn);
+		//TO DO -> save new_conn and requested file name
 
+		//TO DO -> control flow from here on
 		// Verify if request is for a page or script
 		if(!strncmp(req_buf,CGI_EXPR,strlen(CGI_EXPR)))
 			execute_script(new_conn);
@@ -143,6 +195,54 @@ int main(int argc, char ** argv) {
 		close(new_conn);
 
 	}
+
+}
+
+//TO DO -> create serve function
+void serve() {
+	printf("Served with swag\n");
+	pthread_exit(NULL);
+}
+
+//TO DO -> create statistics function
+void statistics() {
+	printf("Statistics PID: %d\n", getpid());
+}
+
+//TO DO -> allow only allowed pages
+//TO DO -> show 404 page if page not found
+// Send html page to client
+void send_page(int socket) {
+	FILE * fp;
+
+	// Searchs for page in directory htdocs
+	sprintf(buf_tmp,"htdocs/%s",req_buf);
+
+	#if DEBUG
+	printf("send_page: searching for %s\n",buf_tmp);
+	#endif
+
+	// Verifies if file exists
+	if((fp=fopen(buf_tmp,"rt"))==NULL) {
+		// Page not found, send error to client
+		printf("send_page: page %s not found, alerting client\n",buf_tmp);
+		not_found(socket);
+	}
+	else {
+		// Page found, send to client
+
+		// First send HTTP header back to client
+		send_header(socket);
+
+		printf("send_page: sending page %s to client\n",buf_tmp);
+		while(fgets(buf_tmp,SIZE_BUF,fp))
+			send(socket,buf_tmp,strlen(buf_tmp),0);
+
+		// Close file
+		fclose(fp);
+	}
+
+	return;
 
 }
 
@@ -175,6 +275,8 @@ void printInvalidConfigFile(void) {
 	printf("THREADPOOL=(number of threads) -> Example:5\n");
 	printf("ALLLOWED=(allowed file names seperated by ; sign) -> file_a.html;file_b.html\n");
 	printf("\nOnly .html and .hmtl.gz files supported\n");
+	kill(statistics_PID,SIGKILL);
+	printf("DEAD CHILD\n");
 	exit(1);
 }
 
@@ -195,7 +297,6 @@ void setAllowedFiles(char* str, char arr[MAX_ALLOWED][SIZE_BUF]) {
 	buf[j]='\0';
 	strcpy(arr[a],buf);
 }
-
 
 // Processes request from client
 void get_request(int socket) {
@@ -252,41 +353,6 @@ void execute_script(int socket) {
 	cannot_execute(socket);
 
 	return;
-}
-
-// Send html page to client
-void send_page(int socket) {
-	FILE * fp;
-
-	// Searchs for page in directory htdocs
-	sprintf(buf_tmp,"htdocs/%s",req_buf);
-
-	#if DEBUG
-	printf("send_page: searching for %s\n",buf_tmp);
-	#endif
-
-	// Verifies if file exists
-	if((fp=fopen(buf_tmp,"rt"))==NULL) {
-		// Page not found, send error to client
-		printf("send_page: page %s not found, alerting client\n",buf_tmp);
-		not_found(socket);
-	}
-	else {
-		// Page found, send to client
-
-		// First send HTTP header back to client
-		send_header(socket);
-
-		printf("send_page: sending page %s to client\n",buf_tmp);
-		while(fgets(buf_tmp,SIZE_BUF,fp))
-			send(socket,buf_tmp,strlen(buf_tmp),0);
-
-		// Close file
-		fclose(fp);
-	}
-
-	return;
-
 }
 
 // Identifies client (address and port) from socket
@@ -414,7 +480,33 @@ void cannot_execute(int socket) {
 
 // Closes socket before closing
 void catch_ctrlc(int sig) {
+	int i;
 	printf("Server terminating\n");
 	close(socket_conn);
+
+	//KILL STATISTICS PROCESS
+	#if DEBUG
+	printf("Killing Statistics process\n");
+	#endif
+	kill(statistics_PID, SIGKILL);
+
+	//CLOSE SEMAPHORE AND DETACH SHARED VARIABLE
+	#if DEBUG
+	printf("Closing semaphore\n");
+	#endif
+	sem_close(semid);
+	#if DEBUG
+	printf("Detaching shared memory\n");
+	#endif
+	shmdt(shared_var);
+	shmctl(shmid,IPC_RMID, NULL);
+
+	//Wait for all threads to complete
+	#if DEBUG
+	printf("Waiting for all threads to complete\n");
+	#endif
+	for (i = 0; i < threadpool + 1; i++) {
+		pthread_join(threads[i], NULL);
+	}
 	exit(0);
 }

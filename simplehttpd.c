@@ -48,21 +48,24 @@ void catch_ctrlc(int);
 void cannot_execute(int socket);
 
 void statistics(void);
-void serve(void);
+void *serve(void* id_ptr);
 void setAllowedFiles(char* str, char arr[MAX_ALLOWED][SIZE_BUF]);
 void printInvalidConfigFile(void);
 void readParam(FILE *file);
 
-//TO DO -> criar estrutura de dados para os requests
-/*
-	-	int new_conn;
-	- char requireFile[SIZE_BUF];
-	- Hora de recepcao
-	- Hora de terminacao de servir o pedido
-	- next
-	- prev
-*/
+//Struct defenition and decaration for requests
+typedef struct Requests {
+	int conn;
+	char requiredFile[SIZE_BUF];
+	time_t timeGetRequest;
+	time_t timeServedRequest;
+	struct Requests *next;
+	struct Requests *prev;
+} request_t;
 
+struct Requests request_buffer;
+
+//BUFFERS DECLARATION
 char buf[SIZE_BUF];
 char req_buf[SIZE_BUF];
 char buf_tmp[SIZE_BUF];
@@ -72,14 +75,17 @@ int port;
 char allowed[MAX_ALLOWED][SIZE_BUF];
 char scheduling[SIZE_BUF];
 int threadpool;
+
 //SEMAPHORES IDS
 int shmid, semid;
+
 //SHARED MEMORY
-//TO DO -> change shared_var to struct
-int *shared_var;
+struct Requests *shared_struct;
+
 //THREADS AND ID ARRAYS
-long id[threadpool];
-pthread_t threads[threadpool];
+long *id;
+pthread_t *threads;
+
 //STATISTICS PROCESS PID
 pid_t statistics_PID;
 
@@ -94,12 +100,11 @@ int main(int argc, char ** argv) {
 			exit(0);
 	} else printf("Main PID: %d\n", getpid());
 
-	//FIX
 	//SHARED MEMORY INITIALIZATION
 	shmid = shmget(IPC_PRIVATE,sizeof(int),IPC_CREAT|0766);
-	shared_var = shmat(shmid, NULL, 0);
+	shared_struct = shmat(shmid, NULL, 0);
 	semid = sem_get(1,1);
-	(*shared_var)=100;
+	//TO DO -> set next pointer and prev pointer to
 
 	//READ CONFIG FILE
 	FILE *config = fopen("config.txt","r");
@@ -140,6 +145,9 @@ int main(int argc, char ** argv) {
 	 #if DEBUG
 	 printf("threadpool: %d\n", threadpool);
 	 #endif
+	 //TO DO -> check if theardpool is bigger than 0
+	 id = (long*) malloc(threadpool * sizeof(long));
+	 threads = (pthread_t*) malloc(threadpool * sizeof(pthread_t));
 
 	 //Read allowed files
 	 readParam(config);
@@ -199,8 +207,11 @@ int main(int argc, char ** argv) {
 }
 
 //TO DO -> create serve function
-void serve() {
-	printf("Served with swag\n");
+void *serve(void* id_ptr) {
+	long id = *((long *) id_ptr);
+	#if DEBUG
+	printf("Served thread %ld\n", id);
+	#endif
 	pthread_exit(NULL);
 }
 
@@ -275,9 +286,7 @@ void printInvalidConfigFile(void) {
 	printf("THREADPOOL=(number of threads) -> Example:5\n");
 	printf("ALLLOWED=(allowed file names seperated by ; sign) -> file_a.html;file_b.html\n");
 	printf("\nOnly .html and .hmtl.gz files supported\n");
-	kill(statistics_PID,SIGKILL);
-	printf("DEAD CHILD\n");
-	exit(1);
+	catch_ctrlc(SIGINT);
 }
 
 // Set array of strings from string
@@ -490,7 +499,7 @@ void catch_ctrlc(int sig) {
 	#endif
 	kill(statistics_PID, SIGKILL);
 
-	//CLOSE SEMAPHORE AND DETACH SHARED VARIABLE
+	//CLOSE SEMAPHORE AND DETACH SHARED STRUCT
 	#if DEBUG
 	printf("Closing semaphore\n");
 	#endif
@@ -498,15 +507,19 @@ void catch_ctrlc(int sig) {
 	#if DEBUG
 	printf("Detaching shared memory\n");
 	#endif
-	shmdt(shared_var);
+	shmdt(shared_struct);
 	shmctl(shmid,IPC_RMID, NULL);
 
 	//Wait for all threads to complete
 	#if DEBUG
 	printf("Waiting for all threads to complete\n");
 	#endif
-	for (i = 0; i < threadpool + 1; i++) {
+	for (i = 0; i < threadpool; i++) {
 		pthread_join(threads[i], NULL);
 	}
+
+	//Free threads and id arrays
+	free(threads);
+	free(id);
 	exit(0);
 }

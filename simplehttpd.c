@@ -48,6 +48,8 @@ void catch_ctrlc(int);
 void cannot_execute(int socket);
 
 void statistics(void);
+
+int isNumber(char* string);
 void *serve(void* id_ptr);
 void setAllowedFiles(char* str, char arr[MAX_ALLOWED][SIZE_BUF]);
 void printInvalidConfigFile(void);
@@ -98,13 +100,13 @@ int main(int argc, char ** argv) {
 	if( (statistics_PID=fork()) == 0) {
 			statistics();
 			exit(0);
-	} else printf("Main PID: %d\n", getpid());
-
-	//SHARED MEMORY INITIALIZATION
-	shmid = shmget(IPC_PRIVATE,sizeof(int),IPC_CREAT|0766);
-	shared_struct = shmat(shmid, NULL, 0);
-	semid = sem_get(1,1);
-	//TO DO -> set next pointer and prev pointer to
+	} else {
+		if(statistics_PID==-1) {
+			printf("Error creating statistics process\n");
+			exit(1);
+		}
+		printf("Main PID: %d\n", getpid());
+	}
 
 	//READ CONFIG FILE
 	FILE *config = fopen("config.txt","r");
@@ -112,11 +114,10 @@ int main(int argc, char ** argv) {
 
 	 // Read port
 	 readParam(config);
-	 //TO DO -> create isNumber function
-	 /*if( !isNumber(buf) ) {
+	 if( !isNumber(buf) ) {
 		 printf("Invalid port value\n");
 		 exit(1);
-	 }*/
+	 }
 	 port=atoi(buf);
 	 #if DEBUG
 	 printf("port: %i\n",port);
@@ -136,11 +137,10 @@ int main(int argc, char ** argv) {
 
 	 //Read threadpool
 	 readParam(config);
-	 //TO DO -> create validScheduling function
-	 /*if( !isNumber(buf) ) {
+	 if( !isNumber(buf) ) {
 		 printf("Invalid number of threads\n");
 		 exit(1);
-	 }*/
+	 }
 	 threadpool = atoi(buf);
 	 #if DEBUG
 	 printf("threadpool: %d\n", threadpool);
@@ -159,10 +159,33 @@ int main(int argc, char ** argv) {
 
 	fclose(config);
 
+	//SHARED MEMORY INITIALIZATION
+	shmid = shmget(IPC_PRIVATE,sizeof(int),IPC_CREAT|0766);
+	if(shmid==-1) {
+		printf("Error allocating shared memory segment\n");
+		exit(1);
+	}
+	shared_struct = shmat(shmid, NULL, 0);
+	if(shared_struct == (void *) -1) {
+		printf("Error attatching shared memory\n");
+		catch_ctrlc(SIGINT);
+	}
+	semid = sem_get(1,1);
+	if(semid==-1) {
+		printf("Error creating semaphore\n");
+		catch_ctrlc(SIGINT);
+	}
+
+	(*shared_struct).next = NULL;
+	(*shared_struct).prev = NULL;
+
 	//INTIALIZE THREADPOOL
 	for (i = 0; i < threadpool; i++) {
 		id[i] = i;
-		pthread_create(&threads[i], NULL, serve, (void *)&id[i]);
+		if(pthread_create(&threads[i], NULL, serve, (void *)&id[i])) {
+			printf("Error creating threads\n");
+			catch_ctrlc(SIGINT);
+		}
 		printf("Thread %d created\n", i);
   }
 
@@ -204,6 +227,17 @@ int main(int argc, char ** argv) {
 
 	}
 
+}
+
+int isNumber(char* string){
+    int i = 0;
+
+    while (string[i] != '\0'){
+        if (string[i] < '0' || string[i] > '9')
+            return 0;
+        i++;
+    }
+    return 1;
 }
 
 //TO DO -> create serve function

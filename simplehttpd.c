@@ -57,6 +57,7 @@ void readParam(FILE *file);
 
 //Struct defenition and decaration for requests
 typedef struct Requests {
+	int ready;
 	int conn;
 	char requiredFile[SIZE_BUF];
 	time_t timeGetRequest;
@@ -125,8 +126,8 @@ int main(int argc, char ** argv) {
 
 	 //Read scheduling
 	 readParam(config);
-	 //TO DO -> create validScheduling function
-	 /*if( !validScheduling(buf) ) {
+	 //TO DO -> create inStringArray function
+	 /*if( !inStringArray(buf) ) {
 		 printf("Invalid scheduling mode");
 		 exit(1);
  	 }*/
@@ -176,8 +177,8 @@ int main(int argc, char ** argv) {
 		catch_ctrlc(SIGINT);
 	}
 
-	(*shared_struct).next = NULL;
-	(*shared_struct).prev = NULL;
+	//TELLS STATISTICS STRUCT NOT READY YET
+	(*shared_struct).ready = 0;
 
 	//INTIALIZE THREADPOOL
 	for (i = 0; i < threadpool; i++) {

@@ -1,89 +1,26 @@
-/*
- Run as: gcc simplehttpd.c semlib.c -lpthread -D_REENTRANT -Wall -o run
+//Run as: gcc simplehttpd.c semlib.c -lpthread -D_REENTRANT -Wall -o run
 
- */
-
-#include <stdio.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <unistd.h>
-#include <ctype.h>
-#include <sys/stat.h>
-#include <sys/wait.h>
-#include <stdlib.h>
-#include <string.h>
-#include <signal.h>
-#include <pthread.h>
-#include <unistd.h>
-#include <time.h>
+#include "simplehttpd.h"
+#include "request.h"
+#include "config.h"
 #include "semlib.h"
-#include <sys/ipc.h>
-#include <sys/shm.h>
-#include <sys/types.h>
 
-// Produce debug information
-#define DEBUG	  	1
-
-// Header of HTTP reply to client
-#define	SERVER_STRING 	"Server: simpleserver/0.1.0\r\n"
-#define HEADER_1	"HTTP/1.0 200 OK\r\n"
-#define HEADER_2	"Content-Type: text/html\r\n\r\n"
-
-#define GET_EXPR	"GET /"
-#define CGI_EXPR	"cgi-bin/"
-#define SIZE_BUF	1024
-#define MAX_ALLOWED 10
-
-int  fireup(int port);
-void identify(int socket);
-void get_request(int socket);
-int  read_line(int socket, int n);
-void send_header(int socket);
-void send_page(int socket);
-void execute_script(int socket);
-void not_found(int socket);
-void catch_ctrlc(int);
-void cannot_execute(int socket);
-
-void statistics(void);
-
-int isNumber(char* string);
-void *serve(void* id_ptr);
-void setAllowedFiles(char* str, char arr[MAX_ALLOWED][SIZE_BUF]);
-void printInvalidConfigFile(void);
-void readParam(FILE *file);
-
-//Struct defenition and decaration for requests
-typedef struct Requests {
-	int ready;
-	int conn;
-	char requiredFile[SIZE_BUF];
-	time_t timeGetRequest;
-	time_t timeServedRequest;
-	struct Requests *next;
-	struct Requests *prev;
-} request_t;
-
-struct Requests request_buffer;
+//REQUEST BUFFER
+request_t *request;
+request_t *request_buffer;
 
 //BUFFERS DECLARATION
 char buf[SIZE_BUF];
 char req_buf[SIZE_BUF];
 char buf_tmp[SIZE_BUF];
 int socket_conn,new_conn;
-// CONFIG FILE DATA
-int port;
-char allowed[MAX_ALLOWED][SIZE_BUF];
-char scheduling[SIZE_BUF];
-int threadpool;
 
 //SEMAPHORES IDS
-int shmid, semid;
+int semid;
 
 //SHARED MEMORY
-struct Requests *shared_struct;
+int shmid;
+config_t *config;
 
 //THREADS AND ID ARRAYS
 long *id;
@@ -97,6 +34,10 @@ int main(int argc, char ** argv) {
 	struct sockaddr_in client_name;
 	socklen_t client_name_len = sizeof(client_name);
 
+	//CREAT REQUEST BUFFER AND SINGLE REQUEST NODE
+	request = createRequestBuffer(request);
+	request_buffer = createRequestBuffer(request_buffer);
+
 	//CREATE STATISTICS PROCESS
 	if( (statistics_PID=fork()) == 0) {
 			statistics();
@@ -109,65 +50,14 @@ int main(int argc, char ** argv) {
 		printf("Main PID: %d\n", getpid());
 	}
 
-	//READ CONFIG FILE
-	FILE *config = fopen("config.txt","r");
-	if(config == NULL) printInvalidConfigFile();
-
-	 // Read port
-	 readParam(config);
-	 if( !isNumber(buf) ) {
-		 printf("Invalid port value\n");
-		 exit(1);
-	 }
-	 port=atoi(buf);
-	 #if DEBUG
-	 printf("port: %i\n",port);
-	 #endif
-
-	 //Read scheduling
-	 readParam(config);
-	 //TO DO -> create inStringArray function
-	 /*if( !inStringArray(buf) ) {
-		 printf("Invalid scheduling mode");
-		 exit(1);
- 	 }*/
-	 strcpy(scheduling,buf);
-	 #if DEBUG
-	 printf("scheduling: %s\n", scheduling);
-	 #endif
-
-	 //Read threadpool
-	 readParam(config);
-	 if( !isNumber(buf) ) {
-		 printf("Invalid number of threads\n");
-		 exit(1);
-	 }
-	 threadpool = atoi(buf);
-	 #if DEBUG
-	 printf("threadpool: %d\n", threadpool);
-	 #endif
-	 //TO DO -> check if theardpool is bigger than 0
-	 id = (long*) malloc(threadpool * sizeof(long));
-	 threads = (pthread_t*) malloc(threadpool * sizeof(pthread_t));
-
-	 //Read allowed files
-	 readParam(config);
-	 strcpy(buf_tmp,buf);
-	 setAllowedFiles(buf_tmp, allowed);
-	 #if DEBUG
-	 printf("Allowed files: %s; %s\n", allowed[0], allowed[1]);
-	 #endif
-
-	fclose(config);
-
 	//SHARED MEMORY INITIALIZATION
-	shmid = shmget(IPC_PRIVATE,sizeof(int),IPC_CREAT|0766);
+	shmid = shmget(IPC_PRIVATE,sizeof(config_t),IPC_CREAT|0766);
 	if(shmid==-1) {
 		printf("Error allocating shared memory segment\n");
 		exit(1);
 	}
-	shared_struct = shmat(shmid, NULL, 0);
-	if(shared_struct == (void *) -1) {
+	config = shmat(shmid, NULL, 0);
+	if(config == (void *) -1) {
 		printf("Error attatching shared memory\n");
 		catch_ctrlc(SIGINT);
 	}
@@ -177,26 +67,34 @@ int main(int argc, char ** argv) {
 		catch_ctrlc(SIGINT);
 	}
 
-	//TELLS STATISTICS STRUCT NOT READY YET
-	(*shared_struct).ready = 0;
+	getConfigData(config);
+
+	if(config->threadpool <= 0) {
+		printf("Invalid number of threadpool\n");
+		catch_ctrlc(SIGINT);
+	}
+	id = (long*) malloc(config->threadpool * sizeof(long));
+	threads = (pthread_t*) malloc(config->threadpool * sizeof(pthread_t));
 
 	//INTIALIZE THREADPOOL
-	for (i = 0; i < threadpool; i++) {
+	for (i = 0; i < config->threadpool; i++) {
 		id[i] = i;
 		if(pthread_create(&threads[i], NULL, serve, (void *)&id[i])) {
 			printf("Error creating threads\n");
 			catch_ctrlc(SIGINT);
 		}
-		printf("Thread %d created\n", i);
+		#if DEBUG
+		printf("Thread %d created\n", (int)id[i]);
+		#endif
   }
 
 	signal(SIGINT,catch_ctrlc);
 
 	//FIRE UP THE A SERVER CONNECTION
-	printf("Listening for HTTP requests on port %d\n",port);
+	printf("Listening for HTTP requests on port %d\n", config->port);
 
 	// Configure listening port
-	if ((socket_conn=fireup(port))==-1)
+	if ((socket_conn=fireup(config->port))==-1)
 		exit(1);
 
 	// Serve requests
@@ -215,36 +113,33 @@ int main(int argc, char ** argv) {
 		get_request(new_conn);
 		//TO DO -> save new_conn and requested file name
 
+		printf("org req: %s conn: %d\n", req_buf, new_conn);
+
+		add_request(request_buffer, new_conn, req_buf);
+		printf("\nREQUEST BUFFER:\n");
+		print_request_buffer(request_buffer);
+		request_buffer = remove_request(&request_buffer,&request);
+		printf("\nREQUEST:\n");
+		print_request_buffer(request);
+
 		//TO DO -> control flow from here on
 		// Verify if request is for a page or script
-		if(!strncmp(req_buf,CGI_EXPR,strlen(CGI_EXPR)))
-			execute_script(new_conn);
+		if(!strncmp(request->requiredFile,CGI_EXPR,strlen(CGI_EXPR)))
+			execute_script(request->conn);
 		else
 			// Search file with html page and send to client
-			send_page(new_conn);
-
+			send_page(request->conn);
 		// Terminate connection with client
-		close(new_conn);
-
+		close(request->conn);
 	}
 
-}
-
-int isNumber(char* string){
-    int i = 0;
-
-    while (string[i] != '\0'){
-        if (string[i] < '0' || string[i] > '9')
-            return 0;
-        i++;
-    }
-    return 1;
+	return 0;
 }
 
 //TO DO -> create serve function
 void *serve(void* id_ptr) {
-	long id = *((long *) id_ptr);
 	#if DEBUG
+	long id = *((long *) id_ptr);
 	printf("Served thread %ld\n", id);
 	#endif
 	pthread_exit(NULL);
@@ -290,56 +185,6 @@ void send_page(int socket) {
 
 	return;
 
-}
-
-// Read value of property from config file
-void readParam(FILE *file) {
-	int i=0;
-	char c;
-	int count = 0;
-
-	do {
-		 c = fgetc(file);
-		 if( feof(file) || c=='\n' ) {
-			 if(count==0) {
-				 printInvalidConfigFile();
-			 }
-			 buf[i++]='\0';
-			 count = 0;
-			 break ;
-		 }
-		 if(count == 1) buf[i++]=c;
-		 if(c=='=') count=1;
-	} while(1);
-}
-
-// Print invalid config file and exit
-void printInvalidConfigFile(void) {
-	printf("Missing assignment = sign in port attribution in the config file\nConfig file must be of the following format:\n\n");
-	printf("SERVERPORT=(port) -> Example:1234\n");
-	printf("SCHEDULING=(schedule type) -> Example:NORMAL\n");
-	printf("THREADPOOL=(number of threads) -> Example:5\n");
-	printf("ALLLOWED=(allowed file names seperated by ; sign) -> file_a.html;file_b.html\n");
-	printf("\nOnly .html and .hmtl.gz files supported\n");
-	catch_ctrlc(SIGINT);
-}
-
-// Set array of strings from string
-void setAllowedFiles(char* str, char arr[MAX_ALLOWED][SIZE_BUF]) {
-	//TRY OUT -> use str[++i]
-	int i=0,j=0,a=0;
-	while(str[i]!='\0') {
-		if(str[i]==';') {
-			buf[j]='\0';
-			strcpy(arr[a++],buf);
-			j=0;
-		} else {
-			buf[j++]= str[i];
-		}
-		++i;
-	}
-	buf[j]='\0';
-	strcpy(arr[a],buf);
 }
 
 // Processes request from client
@@ -420,45 +265,6 @@ void identify(int socket) {
 	return;
 }
 
-// Reads a line (of at most 'n' bytes) from socket
-int read_line(int socket,int n) {
-	int n_read;
-	int not_eol;
-	int ret;
-	char new_char;
-
-	n_read=0;
-	not_eol=1;
-
-	while (n_read<n && not_eol) {
-		ret = read(socket,&new_char,sizeof(char));
-		if (ret == -1) {
-			printf("Error reading from socket (read_line)");
-			return -1;
-		}
-		else if (ret == 0) {
-			return 0;
-		}
-		else if (new_char=='\r') {
-			not_eol = 0;
-			// consumes next byte on buffer (LF)
-			read(socket,&new_char,sizeof(char));
-			continue;
-		}
-		else {
-			buf[n_read]=new_char;
-			n_read++;
-		}
-	}
-
-	buf[n_read]='\0';
-	#if DEBUG
-	printf("read_line: new line read from client socket: %s\n",buf);
-	#endif
-
-	return n_read;
-}
-
 // Creates, prepares and returns new socket
 int fireup(int port) {
 	int new_sock;
@@ -527,34 +333,45 @@ void catch_ctrlc(int sig) {
 	int i;
 	printf("Server terminating\n");
 	close(socket_conn);
+	#if DEBUG
+	printf("Cleaning up\n");
+	#endif
 
 	//KILL STATISTICS PROCESS
-	#if DEBUG
-	printf("Killing Statistics process\n");
-	#endif
 	kill(statistics_PID, SIGKILL);
 
-	//CLOSE SEMAPHORE AND DETACH SHARED STRUCT
-	#if DEBUG
-	printf("Closing semaphore\n");
-	#endif
+	//CLOSE SEMAPHORE
 	sem_close(semid);
-	#if DEBUG
-	printf("Detaching shared memory\n");
-	#endif
-	shmdt(shared_struct);
-	shmctl(shmid,IPC_RMID, NULL);
 
 	//Wait for all threads to complete
-	#if DEBUG
-	printf("Waiting for all threads to complete\n");
-	#endif
-	for (i = 0; i < threadpool; i++) {
+	for (i = 0; i < config->threadpool; i++) {
 		pthread_join(threads[i], NULL);
 	}
 
-	//Free threads and id arrays
+
+	//DEALLOCATE AND DETACH SHARED MEMORY
+	if(shmdt(config)==-1) {
+		printf("Error detaching memory\n");
+	}
+	if(shmctl(shmid,IPC_RMID, NULL)==-1) {
+		printf("Error desalocating shared memory segment\n");
+	};
+
+	//FREE VARS
 	free(threads);
 	free(id);
+	deleteRequestBuffer(&request);
+	//deleteRequestBuffer(&request_buffer);
 	exit(0);
+}
+
+int isNumber(char* string){
+    int i = 0;
+
+    while (string[i] != '\0'){
+        if (string[i] < '0' || string[i] > '9')
+            return 0;
+        i++;
+    }
+    return 1;
 }

@@ -1,5 +1,3 @@
-//Run as: gcc simplehttpd.c semlib.c -lpthread -D_REENTRANT -Wall -o run
-
 #include "simplehttpd.h"
 #include "request.h"
 #include "config.h"
@@ -16,7 +14,7 @@ char buf_tmp[SIZE_BUF];
 int socket_conn,new_conn;
 
 //SEMAPHORES IDS
-int semid;
+//int semid;
 
 //SHARED MEMORY
 int shmid;
@@ -34,7 +32,7 @@ int main(int argc, char ** argv) {
 	struct sockaddr_in client_name;
 	socklen_t client_name_len = sizeof(client_name);
 
-	//CREAT REQUEST BUFFER AND SINGLE REQUEST NODE
+	//CREATE REQUEST BUFFER AND SINGLE REQUEST NODE
 	request = createRequestBuffer(request);
 	request_buffer = createRequestBuffer(request_buffer);
 
@@ -50,43 +48,14 @@ int main(int argc, char ** argv) {
 		printf("Main PID: %d\n", getpid());
 	}
 
-	//SHARED MEMORY INITIALIZATION
-	shmid = shmget(IPC_PRIVATE,sizeof(config_t),IPC_CREAT|0766);
-	if(shmid==-1) {
-		printf("Error allocating shared memory segment\n");
-		exit(1);
-	}
-	config = shmat(shmid, NULL, 0);
-	if(config == (void *) -1) {
-		printf("Error attatching shared memory\n");
-		catch_ctrlc(SIGINT);
-	}
-	semid = sem_get(1,1);
-	if(semid==-1) {
-		printf("Error creating semaphore\n");
-		catch_ctrlc(SIGINT);
-	}
+	createSharedMemory();
 
 	getConfigData(config);
 
-	if(config->threadpool <= 0) {
-		printf("Invalid number of threadpool\n");
-		catch_ctrlc(SIGINT);
-	}
 	id = (long*) malloc(config->threadpool * sizeof(long));
 	threads = (pthread_t*) malloc(config->threadpool * sizeof(pthread_t));
 
-	//INTIALIZE THREADPOOL
-	for (i = 0; i < config->threadpool; i++) {
-		id[i] = i;
-		if(pthread_create(&threads[i], NULL, serve, (void *)&id[i])) {
-			printf("Error creating threads\n");
-			catch_ctrlc(SIGINT);
-		}
-		#if DEBUG
-		printf("Thread %d created\n", (int)id[i]);
-		#endif
-  }
+	createThreadPool();
 
 	signal(SIGINT,catch_ctrlc);
 
@@ -103,7 +72,7 @@ int main(int argc, char ** argv) {
 		// Accept connection on socket
 		if ( (new_conn = accept(socket_conn,(struct sockaddr *)&client_name,&client_name_len)) == -1 ) {
 			printf("Error accepting connection\n");
-			exit(1);
+			catch_ctrlc(SIGINT,"SERVER");
 		}
 
 		// Identify new client
@@ -134,6 +103,34 @@ int main(int argc, char ** argv) {
 	}
 
 	return 0;
+}
+
+//INTIALIZE THREADPOOL
+void createThreadPool() {
+	for (i = 0; i < config->threadpool; i++) {
+		id[i] = i;
+		if(pthread_create(&threads[i], NULL, serve, (void *)&id[i])) {
+			printf("Error creating threads\n");
+			catch_ctrlc(SIGINT,"THREADS");
+		}
+		#if DEBUG
+		printf("Thread %d created\n", (int)id[i]);
+		#endif
+	}
+}
+
+//SHARED MEMORY INITIALIZATION
+void createSharedMemory() {
+	shmid = shmget(IPC_PRIVATE,sizeof(config_t),IPC_CREAT|0766);
+	if(shmid==-1) {
+		printf("Error allocating shared memory segment\n");
+		catch_ctrlc(SIGINT,"ALLOCATTE SHARED MEMORY");
+	}
+	config = shmat(shmid, NULL, 0);
+	if(config == (void *) -1) {
+		printf("Error attatching shared memory\n");
+		catch_ctrlc(SIGINT,"ATTATCH SHARED MEMORY");
+	}
 }
 
 //TO DO -> create serve function
@@ -208,7 +205,7 @@ void get_request(int socket) {
 	// Currently only supports GET
 	if(!found_get) {
 		printf("Request from client without a GET\n");
-		exit(1);
+		catch_ctrlc(SIGINT,"SERVER");
 	}
 	// If no particular page is requested then we consider htdocs/index.html
 	if(!strlen(req_buf))
@@ -328,8 +325,31 @@ void cannot_execute(int socket) {
 	return;
 }
 
+//JOIN THREADS
+void joinThreads() {
+	//Wait for all threads to complete
+	for (i = 0; i < config->threadpool; i++) {
+		pthread_join(threads[i], NULL);
+	}
+}
+
+//DETATCH MEMORY
+void detatchSharedMemory() {
+	if(shmdt(config)==-1) {
+		printf("Error detaching memory\n");
+		return;
+	}
+}
+
+//DESALLOCATE MEMORY
+void desalocateSharedMemory() {
+	if(shmctl(shmid,IPC_RMID, NULL)==-1) {
+		printf("Error desalocating shared memory segment\n");
+	}
+}
+
 // Closes socket before closing
-void catch_ctrlc(int sig) {
+void catch_ctrlc(int sig, char option[SIZE_BUF]) {
 	int i;
 	printf("Server terminating\n");
 	close(socket_conn);
@@ -340,27 +360,26 @@ void catch_ctrlc(int sig) {
 	//KILL STATISTICS PROCESS
 	kill(statistics_PID, SIGKILL);
 
-	//CLOSE SEMAPHORE
-	sem_close(semid);
+	if(strcmp(option,"THREADS")==0) {
+		joinThreads();
+	} else if(strcmp(option,"ALLOCATE SHARED MEMORY")) {
+		joinThreads();
+		desallocateSharedMemory();
+	} else if(strcmp(option,"ATTATCH SHARED MEMORY")) {
+		joinThreads();
+		desallocateSharedMemory();
+		detatchSharedMemory();
+	} else {
+		joinThreads();
+		desallocateSharedMemory();
+		detatchSharedMemory();
 
-	//Wait for all threads to complete
-	for (i = 0; i < config->threadpool; i++) {
-		pthread_join(threads[i], NULL);
+		//FREE VARS
+		free(threads);
+		free(id);
+		deleteRequestBuffer(&request_buffer);
 	}
 
-
-	//DEALLOCATE AND DETACH SHARED MEMORY
-	if(shmdt(config)==-1) {
-		printf("Error detaching memory\n");
-	}
-	if(shmctl(shmid,IPC_RMID, NULL)==-1) {
-		printf("Error desalocating shared memory segment\n");
-	};
-
-	//FREE VARS
-	free(threads);
-	free(id);
-	deleteRequestBuffer(&request_buffer);
 	exit(0);
 }
 

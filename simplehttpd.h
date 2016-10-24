@@ -17,23 +17,7 @@
 #include <sys/shm.h>
 #include <sys/types.h>
 
-void catch_ctrlc(int sig);
-int  fireup(int port);
-void identify(int socket);
-void get_request(int socket);
-int  read_line(int socket, int n);
-void send_header(int socket);
-void send_page(int socket);
-void execute_script(int socket);
-void not_found(int socket);
-void catch_ctrlc(int);
-void cannot_execute(int socket);
 
-void statistics(void);
-void *serve(void* id_ptr);
-void printInvalidConfigFile(void);
-void readParam(FILE *file);
-int isNumber(char* string);
 
 // Header of HTTP reply to client
 #define	SERVER_STRING 	"Server: simpleserver/0.1.0\r\n"

@@ -43,6 +43,7 @@ void remove_request(request_t **request_buffer, request_t **request_cpy) {
 			next_node = createRequestBuffer();
 		}
     *request_cpy = *request_buffer;
+		(*request_cpy)->next=NULL;
     *request_buffer = next_node;
 }
 

@@ -31,18 +31,19 @@ request_t *createRequestBuffer(){
   return head;
 }
 
-request_t *remove_request(request_t **request_buffer, request_t **request_cpy) {
+void remove_request(request_t **request_buffer, request_t **request_cpy) {
     request_t * next_node = NULL;
 
     if (*request_buffer == NULL) {
-        return NULL;
+				*request_cpy = NULL;
+        return;
     }
 
-    next_node = (*request_buffer)->next;
+    if( (next_node = (*request_buffer)->next) == NULL ) {
+			next_node = createRequestBuffer();
+		}
     *request_cpy = *request_buffer;
     *request_buffer = next_node;
-
-    return *request_cpy;
 }
 
 //TO DO -> complete function

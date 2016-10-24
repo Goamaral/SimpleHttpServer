@@ -111,14 +111,13 @@ int main(int argc, char ** argv) {
 
 		// Process request
 		get_request(new_conn);
-		//TO DO -> save new_conn and requested file name
 
 		printf("org req: %s conn: %d\n", req_buf, new_conn);
 
 		add_request(request_buffer, new_conn, req_buf);
 		printf("\nREQUEST BUFFER:\n");
 		print_request_buffer(request_buffer);
-		request_buffer = remove_request(&request_buffer,&request);
+		remove_request(&request_buffer,&request);
 		printf("\nREQUEST:\n");
 		print_request_buffer(request);
 
@@ -131,6 +130,7 @@ int main(int argc, char ** argv) {
 			send_page(request->conn);
 		// Terminate connection with client
 		close(request->conn);
+		deleteRequestBuffer(&request);
 	}
 
 	return 0;
@@ -360,8 +360,7 @@ void catch_ctrlc(int sig) {
 	//FREE VARS
 	free(threads);
 	free(id);
-	deleteRequestBuffer(&request);
-	//deleteRequestBuffer(&request_buffer);
+	deleteRequestBuffer(&request_buffer);
 	exit(0);
 }
 

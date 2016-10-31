@@ -95,6 +95,7 @@ int main(int argc, char ** argv) {
 			execute_script(request->conn);
 		else
 			// Search file with html page and send to client
+			strcpy(req_buf,request->requiredFile);
 			send_page(request->conn);
 		// Terminate connection with client
 		close(request->conn);

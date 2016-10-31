@@ -40,13 +40,13 @@ void readParam(FILE *file) {
 
 // Print invalid config file and exit
 void printInvalidConfigFile(void) {
-	printf("Missing assignment = sign in port attribution in the config file\nConfig file must be of the following format:\n\n");
+	printf("\nMissing assignment = sign in one of the attributions in the config file\nConfig file must be of the following format:\n\n");
 	printf("SERVERPORT=(port) -> Example:1234\n");
 	printf("SCHEDULING=(schedule type) -> Example:NORMAL\n");
 	printf("THREADPOOL=(number of threads) -> Example:5\n");
 	printf("ALLLOWED=(allowed file names seperated by ; sign) -> file_a.html;file_b.html\n");
-	printf("\nOnly .html and .hmtl.gz files supported\n");
-  exit(1);
+	printf("\nOnly .html and .hmtl.gz files supported\n\n");
+  shutdown_server("PID");
 }
 
 int isNumber(char* string){
@@ -94,9 +94,9 @@ void getConfigData(config_t *config) {
 
 	 //Read threadpool
 	 readParam(file);
-	 if( !isNumber(buf) ) {
+	 if( !isNumber(buf) || atoi(buf)==0) {
 		 printf("Invalid number of threads\n");
-		 exit(1);
+     shutdown_server("PID");
 	 }
 	 config->threadpool = atoi(buf);
 	 #if DEBUG

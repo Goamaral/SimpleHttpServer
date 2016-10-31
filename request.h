@@ -1,3 +1,6 @@
+// Produce debug information
+//#define DEBUG	  	1
+
 #define SIZE_BUF	1024
 
 typedef struct Requests {

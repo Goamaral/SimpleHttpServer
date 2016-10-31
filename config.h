@@ -1,4 +1,5 @@
-#define DEBUG 1
+// Produce debug information
+//#define DEBUG	  	1
 
 typedef struct Config {
   int port;

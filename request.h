@@ -1,5 +1,3 @@
-#include "simplehttpd.h"
-
 #define SIZE_BUF	1024
 
 typedef struct Requests {

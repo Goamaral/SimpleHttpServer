@@ -28,7 +28,6 @@ pthread_t *threads;
 pid_t statistics_PID;
 
 int main(int argc, char ** argv) {
-	int i;
 	struct sockaddr_in client_name;
 	socklen_t client_name_len = sizeof(client_name);
 
@@ -43,7 +42,7 @@ int main(int argc, char ** argv) {
 	} else {
 		if(statistics_PID==-1) {
 			printf("Error creating statistics process\n");
-			exit(1);
+			shutdown_server("PID");
 		}
 		printf("Main PID: %d\n", getpid());
 	}
@@ -72,7 +71,7 @@ int main(int argc, char ** argv) {
 		// Accept connection on socket
 		if ( (new_conn = accept(socket_conn,(struct sockaddr *)&client_name,&client_name_len)) == -1 ) {
 			printf("Error accepting connection\n");
-			catch_ctrlc(SIGINT,"SERVER");
+			shutdown_server("SERVER");
 		}
 
 		// Identify new client
@@ -107,11 +106,13 @@ int main(int argc, char ** argv) {
 
 //INTIALIZE THREADPOOL
 void createThreadPool() {
+	int i;
+
 	for (i = 0; i < config->threadpool; i++) {
 		id[i] = i;
 		if(pthread_create(&threads[i], NULL, serve, (void *)&id[i])) {
 			printf("Error creating threads\n");
-			catch_ctrlc(SIGINT,"THREADS");
+			shutdown_server("THREADS");
 		}
 		#if DEBUG
 		printf("Thread %d created\n", (int)id[i]);
@@ -124,12 +125,12 @@ void createSharedMemory() {
 	shmid = shmget(IPC_PRIVATE,sizeof(config_t),IPC_CREAT|0766);
 	if(shmid==-1) {
 		printf("Error allocating shared memory segment\n");
-		catch_ctrlc(SIGINT,"ALLOCATTE SHARED MEMORY");
+		shutdown_server("ALLOCATTE SHARED MEMORY");
 	}
 	config = shmat(shmid, NULL, 0);
 	if(config == (void *) -1) {
 		printf("Error attatching shared memory\n");
-		catch_ctrlc(SIGINT,"ATTATCH SHARED MEMORY");
+		shutdown_server("ATTATCH SHARED MEMORY");
 	}
 }
 
@@ -205,7 +206,7 @@ void get_request(int socket) {
 	// Currently only supports GET
 	if(!found_get) {
 		printf("Request from client without a GET\n");
-		catch_ctrlc(SIGINT,"SERVER");
+		shutdown_server("SERVER");
 	}
 	// If no particular page is requested then we consider htdocs/index.html
 	if(!strlen(req_buf))
@@ -327,6 +328,7 @@ void cannot_execute(int socket) {
 
 //JOIN THREADS
 void joinThreads() {
+	int i;
 	//Wait for all threads to complete
 	for (i = 0; i < config->threadpool; i++) {
 		pthread_join(threads[i], NULL);
@@ -342,17 +344,18 @@ void detatchSharedMemory() {
 }
 
 //DESALLOCATE MEMORY
-void desalocateSharedMemory() {
+void desallocateSharedMemory() {
 	if(shmctl(shmid,IPC_RMID, NULL)==-1) {
 		printf("Error desalocating shared memory segment\n");
 	}
 }
 
+void catch_ctrlc(int sig) {
+	shutdown_server("SERVER");
+}
+
 // Closes socket before closing
-void catch_ctrlc(int sig, char option[SIZE_BUF]) {
-	int i;
-	printf("Server terminating\n");
-	close(socket_conn);
+void shutdown_server(char option[SIZE_BUF]) {
 	#if DEBUG
 	printf("Cleaning up\n");
 	#endif
@@ -360,19 +363,22 @@ void catch_ctrlc(int sig, char option[SIZE_BUF]) {
 	//KILL STATISTICS PROCESS
 	kill(statistics_PID, SIGKILL);
 
-	if(strcmp(option,"THREADS")==0) {
+	if(!strcmp(option,"THREADS")) {
 		joinThreads();
-	} else if(strcmp(option,"ALLOCATE SHARED MEMORY")) {
-		joinThreads();
-		desallocateSharedMemory();
-	} else if(strcmp(option,"ATTATCH SHARED MEMORY")) {
+	} else if(!strcmp(option,"ALLOCATE SHARED MEMORY")) {
 		joinThreads();
 		desallocateSharedMemory();
-		detatchSharedMemory();
-	} else {
+	} else if(!strcmp(option,"ATTATCH SHARED MEMORY")) {
 		joinThreads();
 		desallocateSharedMemory();
 		detatchSharedMemory();
+	} else if(!strcmp(option,"SERVER")){
+		joinThreads();
+		desallocateSharedMemory();
+		detatchSharedMemory();
+
+		printf("Server terminating\n");
+		close(socket_conn);
 
 		//FREE VARS
 		free(threads);
@@ -383,13 +389,41 @@ void catch_ctrlc(int sig, char option[SIZE_BUF]) {
 	exit(0);
 }
 
-int isNumber(char* string){
-    int i = 0;
+// Reads a line (of at most 'n' bytes) from socket
+int read_line(int socket,int n) {
+	int n_read;
+	int not_eol;
+	int ret;
+	char new_char;
 
-    while (string[i] != '\0'){
-        if (string[i] < '0' || string[i] > '9')
-            return 0;
-        i++;
-    }
-    return 1;
+	n_read=0;
+	not_eol=1;
+
+	while (n_read<n && not_eol) {
+		ret = read(socket,&new_char,sizeof(char));
+		if (ret == -1) {
+			printf("Error reading from socket (read_line)");
+			return -1;
+		}
+		else if (ret == 0) {
+			return 0;
+		}
+		else if (new_char=='\r') {
+			not_eol = 0;
+			// consumes next byte on buffer (LF)
+			read(socket,&new_char,sizeof(char));
+			continue;
+		}
+		else {
+			buf[n_read]=new_char;
+			n_read++;
+		}
+	}
+
+	buf[n_read]='\0';
+	#if DEBUG
+	printf("read_line: new line read from client socket: %s\n",buf);
+	#endif
+
+	return n_read;
 }

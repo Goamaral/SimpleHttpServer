@@ -1,4 +1,4 @@
-#include "simplehttpd.h"
+#define DEBUG 1
 
 typedef struct Config {
   int port;
@@ -10,8 +10,12 @@ typedef struct Config {
 //VARS
 char buf[SIZE_BUF];
 
+int isNumber(char buff[SIZE_BUF]);
+void readParam(FILE *file);
 void printInvalidConfigFile(void);
+void getConfigData(config_t *config);
 void setAllowedFiles(char* str, char arr[MAX_ALLOWED][SIZE_BUF]);
+
 
 // Read value of property from config file
 void readParam(FILE *file) {
@@ -42,46 +46,21 @@ void printInvalidConfigFile(void) {
 	printf("THREADPOOL=(number of threads) -> Example:5\n");
 	printf("ALLLOWED=(allowed file names seperated by ; sign) -> file_a.html;file_b.html\n");
 	printf("\nOnly .html and .hmtl.gz files supported\n");
-	catch_ctrlc(SIGINT);
+  exit(1);
 }
 
-// Reads a line (of at most 'n' bytes) from socket
-int read_line(int socket,int n) {
-	int n_read;
-	int not_eol;
-	int ret;
-	char new_char;
+int isNumber(char* string){
+    int i = 0;
 
-	n_read=0;
-	not_eol=1;
+		if(!strcmp(string,"")) return 0;
 
-	while (n_read<n && not_eol) {
-		ret = read(socket,&new_char,sizeof(char));
-		if (ret == -1) {
-			printf("Error reading from socket (read_line)");
-			return -1;
-		}
-		else if (ret == 0) {
-			return 0;
-		}
-		else if (new_char=='\r') {
-			not_eol = 0;
-			// consumes next byte on buffer (LF)
-			read(socket,&new_char,sizeof(char));
-			continue;
-		}
-		else {
-			buf[n_read]=new_char;
-			n_read++;
-		}
-	}
+    while (string[i] != '\0'){
+        if (string[i] < '0' || string[i] > '9')
+            return 0;
+        i++;
+    }
 
-	buf[n_read]='\0';
-	#if DEBUG
-	printf("read_line: new line read from client socket: %s\n",buf);
-	#endif
-
-	return n_read;
+    return 1;
 }
 
 void getConfigData(config_t *config) {
@@ -94,7 +73,7 @@ void getConfigData(config_t *config) {
 	 readParam(file);
 	 if( !isNumber(buf) ) {
 		 printf("Invalid port value\n");
-		 exit(1);
+     shutdown_server("PID");
 	 }
 	 config->port=atoi(buf);
 	 #if DEBUG

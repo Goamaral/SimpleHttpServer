@@ -27,6 +27,14 @@ pthread_t *threads;
 //STATISTICS PROCESS PID
 pid_t statistics_PID;
 
+//SCHEDULER VARIABLES
+int schedulerOn;
+int *availableServingThreads;
+int messageQueueId;
+
+//REQUEST COUNTER
+int requestCounter=0;
+
 int main(int argc, char ** argv) {
 	struct sockaddr_in client_name;
 	socklen_t client_name_len = sizeof(client_name);
@@ -42,7 +50,7 @@ int main(int argc, char ** argv) {
 	} else {
 		if(statistics_PID==-1) {
 			printf("Error creating statistics process\n");
-			shutdown_server("PID");
+			shutdown_server(PID);
 		}
 		printf("Main PID: %d\n", getpid());
 	}
@@ -51,10 +59,20 @@ int main(int argc, char ** argv) {
 
 	getConfigData(config);
 
-	id = (long*) malloc(config->threadpool * sizeof(long));
-	threads = (pthread_t*) malloc(config->threadpool * sizeof(pthread_t));
+	//AVAILABLE SERVING THREADS
+	availableServingThreads = (int*) malloc( (config->threadpool) * sizeof(int) );
+
+	//VARIABLES FOR THE THREADPOOL
+	id = (long*) malloc( (config->threadpool + 1) * sizeof(long));
+	threads = (pthread_t*) malloc( (config->threadpool + 1) * sizeof(pthread_t));
 
 	createThreadPool();
+
+	//MESSAGE QUEUE
+	if( (messageQueueId=msgget(IPC_PRIVATE, IPC_CREAT|0766)) == -1 ) {
+    printf("Error creating message queue");
+		shutdown_server(THREADS);
+  }
 
 	signal(SIGINT,catch_ctrlc);
 
@@ -71,7 +89,7 @@ int main(int argc, char ** argv) {
 		// Accept connection on socket
 		if ( (new_conn = accept(socket_conn,(struct sockaddr *)&client_name,&client_name_len)) == -1 ) {
 			printf("Error accepting connection\n");
-			shutdown_server("SERVER");
+			shutdown_server(SERVER);
 		}
 
 		// Identify new client
@@ -82,42 +100,80 @@ int main(int argc, char ** argv) {
 
 		printf("org req: %s conn: %d\n", req_buf, new_conn);
 
-		add_request(request_buffer, new_conn, req_buf);
+		requestCounter+=1;
+		add_request(request_buffer, requestCounter, new_conn, req_buf);
 		printf("\nREQUEST BUFFER:\n");
 		print_request_buffer(request_buffer);
-		remove_request(&request_buffer,&request);
-		printf("\nREQUEST:\n");
-		print_request_buffer(request);
-
-		//TO DO -> control flow from here on
-		// Verify if request is for a page or script
-		if(!strncmp(request->requiredFile,CGI_EXPR,strlen(CGI_EXPR)))
-			execute_script(request->conn);
-		else
-			// Search file with html page and send to client
-			strcpy(req_buf,request->requiredFile);
-			send_page(request->conn);
-		// Terminate connection with client
-		close(request->conn);
-		deleteRequestBuffer(&request);
 	}
 
 	return 0;
 }
 
+long checkFreeThread() {
+	int i;
+	for(i=0; i < config->threadpool; ++i) {
+		if(availableServingThreads[i] == 0) {
+			return i+1;
+		}
+	}
+	return -1;
+}
+
+//TO DO-> create scheduler function
+//TEST: send message  to turn on scheduler and serving threads instead of variable
+void *scheduler(void* id_ptr) {
+	serve_msg_t msg;
+	while(schedulerOn) {
+		//TO DO-> nao remover da lista mas ficar com o id do request e depois de servido apaga-lo da lista
+		//FOR FIFO ONLY
+		remove_request(&request_buffer,&request);
+		if(request!=NULL && request->conn!=-1) {
+			//TO DO-> create fill message function
+			if( (msg.mtype = checkFreeThread()) != -1 ) {
+				msg.conn = request->conn;
+				strcpy(msg.requiredFile, request->requiredFile);
+				printf("\nREQUEST:\n");
+				print_request_buffer(request);
+				deleteRequestBuffer(&request);
+				printf("\n--- SENDING MESSAGE TO SERVING THREAD %ld ---\n", msg.mtype);
+				msgsnd(messageQueueId, &msg, sizeof(msg)-sizeof(long), 0);
+			} else {
+				printf("No available threads at the moment\n");
+				//TO DO-> Send full server to client
+			}
+		}
+		sleep(3);
+	}
+	#if DEBUG
+	long id = *((long *) id_ptr);
+	printf("Scheduler as thread %ld has ended\n", id);
+	#endif
+	pthread_exit(NULL);
+}
+
 //INTIALIZE THREADPOOL
 void createThreadPool() {
 	int i;
+	schedulerOn=1;
 
 	for (i = 0; i < config->threadpool; i++) {
 		id[i] = i;
 		if(pthread_create(&threads[i], NULL, serve, (void *)&id[i])) {
 			printf("Error creating threads\n");
-			shutdown_server("THREADS");
+			shutdown_server(THREADS);
 		}
 		#if DEBUG
 		printf("Thread %d created\n", (int)id[i]);
 		#endif
+	}
+	id[i]= i;
+	if(pthread_create(&threads[i], NULL, scheduler, (void *)&id[i])) {
+		printf("Error creating threads\n");
+		shutdown_server(THREADS);
+	}
+
+	for(i=0; i < config->threadpool; ++i) {
+		availableServingThreads[i]=0;
 	}
 }
 
@@ -126,19 +182,34 @@ void createSharedMemory() {
 	shmid = shmget(IPC_PRIVATE,sizeof(config_t),IPC_CREAT|0766);
 	if(shmid==-1) {
 		printf("Error allocating shared memory segment\n");
-		shutdown_server("ALLOCATTE SHARED MEMORY");
+		shutdown_server(ALLOCATE_SHARED_MEMORY);
 	}
 	config = shmat(shmid, NULL, 0);
 	if(config == (void *) -1) {
 		printf("Error attatching shared memory\n");
-		shutdown_server("ATTATCH SHARED MEMORY");
+		shutdown_server(ATTATCH_SHARED_MEMORY);
 	}
 }
 
-//TO DO -> create serve function
+//TO DO -> create serve function | change to no wait
 void *serve(void* id_ptr) {
-	#if DEBUG
 	long id = *((long *) id_ptr);
+	serve_msg_t msg;
+
+	while(schedulerOn) {
+		printf("\n--- WAITING FOR MESSAGE OF TYPE %ld ---\n", id);
+    msgrcv(messageQueueId, &msg, sizeof(msg)-sizeof(long), id, 0);
+		printf("\n--- RECIEVED MESSAGE AT THREAD %ld ---\n", id);
+		/*if(!strncmp(msg.requiredFile,CGI_EXPR,strlen(CGI_EXPR)))
+			execute_script(msg.conn);
+		else
+			// Search file with html page and send to client
+			strcpy(req_buf,msg.requiredFile);
+			send_page(msg.conn);
+		// Terminate connection with client
+		close(msg.conn);*/
+	}
+	#if DEBUG
 	printf("Served thread %ld\n", id);
 	#endif
 	pthread_exit(NULL);
@@ -149,7 +220,6 @@ void statistics() {
 	printf("Statistics PID: %d\n", getpid());
 }
 
-//TO DO -> allow only allowed pages
 //TO DO -> show 404 page if page not found
 // Send html page to client
 void send_page(int socket) {
@@ -207,7 +277,7 @@ void get_request(int socket) {
 	// Currently only supports GET
 	if(!found_get) {
 		printf("Request from client without a GET\n");
-		shutdown_server("SERVER");
+		shutdown_server(SERVER);
 	}
 	// If no particular page is requested then we consider htdocs/index.html
 	if(!strlen(req_buf))
@@ -329,11 +399,17 @@ void cannot_execute(int socket) {
 
 //JOIN THREADS
 void joinThreads() {
+	schedulerOn=0;
 	int i;
 	//Wait for all threads to complete
-	for (i = 0; i < config->threadpool; i++) {
+	for (i = 0; i < config->threadpool+1; i++) {
 		pthread_join(threads[i], NULL);
 	}
+
+	free(availableServingThreads);
+	free(threads);
+	free(id);
+	msgctl(messageQueueId, IPC_RMID, NULL);
 }
 
 //DETATCH MEMORY
@@ -352,11 +428,11 @@ void desallocateSharedMemory() {
 }
 
 void catch_ctrlc(int sig) {
-	shutdown_server("SERVER");
+	shutdown_server(SERVER);
 }
 
 // Closes socket before closing
-void shutdown_server(char option[SIZE_BUF]) {
+void shutdown_server(int option) {
 	#if DEBUG
 	printf("Cleaning up\n");
 	#endif
@@ -364,27 +440,32 @@ void shutdown_server(char option[SIZE_BUF]) {
 	//KILL STATISTICS PROCESS
 	kill(statistics_PID, SIGKILL);
 
-	if(!strcmp(option,"THREADS")) {
-		joinThreads();
-	} else if(!strcmp(option,"ALLOCATE SHARED MEMORY")) {
-		joinThreads();
-		desallocateSharedMemory();
-	} else if(!strcmp(option,"ATTATCH SHARED MEMORY")) {
-		joinThreads();
-		desallocateSharedMemory();
-		detatchSharedMemory();
-	} else if(!strcmp(option,"SERVER")){
-		joinThreads();
-		desallocateSharedMemory();
-		detatchSharedMemory();
+	switch(option) {
+    case THREADS:
+		  joinThreads();
+			desallocateSharedMemory();
+  		detatchSharedMemory();
+      break;
+  	case ALLOCATE_SHARED_MEMORY:
+  		desallocateSharedMemory();
+      break;
+  	case ATTATCH_SHARED_MEMORY:
+  		desallocateSharedMemory();
+  		detatchSharedMemory();
+      break;
+  	case SERVER:
+  		joinThreads();
+  		desallocateSharedMemory();
+  		detatchSharedMemory();
 
-		printf("Server terminating\n");
-		close(socket_conn);
+  		printf("Server terminating\n");
+  		close(socket_conn);
 
-		//FREE VARS
-		free(threads);
-		free(id);
-		deleteRequestBuffer(&request_buffer);
+  		//FREE VARS
+  		deleteRequestBuffer(&request_buffer);
+      break;
+    default:
+      break;
 	}
 
 	exit(0);

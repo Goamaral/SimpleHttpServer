@@ -47,7 +47,7 @@ void printInvalidConfigFile(void) {
 	printf("THREADPOOL=(number of threads) -> Example:5\n");
 	printf("ALLLOWED=(allowed file names seperated by ; sign) -> file_a.html;file_b.html\n");
 	printf("\nOnly .html and .hmtl.gz files supported\n\n");
-  shutdown_server("PID");
+  shutdown_server(PID);
 }
 
 int isNumber(char* string){
@@ -74,7 +74,7 @@ void getConfigData(config_t *config) {
 	 readParam(file);
 	 if( !isNumber(buf) ) {
 		 printf("Invalid port value\n");
-     shutdown_server("PID");
+     shutdown_server(PID);
 	 }
 	 config->port=atoi(buf);
 	 #if DEBUG
@@ -97,7 +97,7 @@ void getConfigData(config_t *config) {
 	 readParam(file);
 	 if( !isNumber(buf) || atoi(buf)==0) {
 		 printf("Invalid number of threads\n");
-     shutdown_server("PID");
+     shutdown_server(PID);
 	 }
 	 config->threadpool = atoi(buf);
 	 #if DEBUG

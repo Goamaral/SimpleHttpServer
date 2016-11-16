@@ -16,6 +16,7 @@
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <sys/types.h>
+#include <sys/msg.h>
 
 // Header of HTTP reply to client
 #define	SERVER_STRING 	"Server: simpleserver/0.1.0\r\n"
@@ -43,8 +44,23 @@ void joinThreads();
 void detatchSharedMemory();
 void desallocateSharedMemory();
 void catch_ctrlc(int sig);
-void shutdown_server(char option[SIZE_BUF]);
+void shutdown_server(int option);
 int read_line(int socket,int n);
 
 // Produce debug information
-//#define DEBUG	  	1
+#define DEBUG	  	1
+
+//ERROR MACROS
+#define THREADS 0
+#define ALLOCATE_SHARED_MEMORY 1
+#define ATTATCH_SHARED_MEMORY 2
+#define SERVER 3
+#define PID 4
+
+typedef struct {
+	int id;
+	long mtype;
+  int conn;
+  char requiredFile[SIZE_BUF];
+  time_t timeGetRequest;
+} serve_msg_t;

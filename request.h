@@ -4,12 +4,11 @@
 #define SIZE_BUF	1024
 
 typedef struct Requests {
+	int id;
 	int conn;
 	char requiredFile[SIZE_BUF];
 	time_t timeGetRequest;
-	time_t timeServedRequest;
 	struct Requests *next;
-	struct Requests *prev;
 } request_t;
 
 void deleteRequestBuffer(request_t **request_buffer) {
@@ -35,7 +34,7 @@ request_t *createRequestBuffer(){
 void remove_request(request_t **request_buffer, request_t **request_cpy) {
     request_t * next_node = NULL;
 
-    if (*request_buffer == NULL) {
+    if (*request_buffer == NULL || (*request_buffer)->conn == -1) {
 				*request_cpy = NULL;
         return;
     }
@@ -53,13 +52,13 @@ void print_request_buffer(request_t *request_buffer) {
     request_t *current = request_buffer;
 
     while (current != NULL) {
-      printf("conn: %d req: %s\n", current->conn, current->requiredFile);
+      printf("id: %d conn: %d req: %s\n", current->id, current->conn, current->requiredFile);
       current = current->next;
     }
 }
 
 //TO DO -> complete function
-void add_request(request_t *request_buffer, int conn, char requiredFile[SIZE_BUF]) {
+void add_request(request_t *request_buffer, int id, int conn, char requiredFile[SIZE_BUF]) {
     request_t* current = request_buffer;
 
     if(current == NULL) {
@@ -78,5 +77,6 @@ void add_request(request_t *request_buffer, int conn, char requiredFile[SIZE_BUF
       current->next->conn = conn;
       strcpy(current->next->requiredFile,requiredFile);
       current->next->next = NULL;
+			current->next->id = id;
     }
 }

@@ -59,7 +59,6 @@ int read_line(int socket,int n);
 
 typedef struct {
 	int id;
-	long mtype;
   int conn;
   char requiredFile[SIZE_BUF];
   time_t timeGetRequest;

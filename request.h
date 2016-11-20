@@ -25,6 +25,7 @@ void deleteRequestBuffer(request_t **request_buffer) {
 
 request_t *createRequestBuffer(){
   request_t *head = malloc(sizeof(request_t));
+	head->id=-1;
   head->conn = -1;
   strcpy(head->requiredFile, "EMPTY");
   head->next = NULL;
@@ -69,14 +70,15 @@ void add_request(request_t *request_buffer, int id, int conn, char requiredFile[
     if( (current->conn) == -1) {
       current->conn = conn;
       strcpy(current->requiredFile, requiredFile);
+			current->id = id;
     } else {
       while (current->next != NULL) {
           current = current->next;
       }
       current->next = malloc(sizeof(request_t));
       current->next->conn = conn;
+			current->next->id = id;
       strcpy(current->next->requiredFile,requiredFile);
       current->next->next = NULL;
-			current->next->id = id;
     }
 }

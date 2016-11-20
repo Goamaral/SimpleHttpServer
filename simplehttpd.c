@@ -14,7 +14,7 @@ char buf_tmp[SIZE_BUF];
 int socket_conn,new_conn;
 
 //SEMAPHORES IDS
-//int semid;
+int semid;
 
 //SHARED MEMORY
 int shmid;
@@ -30,10 +30,14 @@ pid_t statistics_PID;
 //SCHEDULER VARIABLES
 int schedulerOn;
 int *availableServingThreads;
+serve_msg_t *threadMessages;
 int messageQueueId;
 
 //REQUEST COUNTER
 int requestCounter=0;
+
+//THREAD CALLED ID
+long msg_sent;
 
 int main(int argc, char ** argv) {
 	struct sockaddr_in client_name;
@@ -57,10 +61,18 @@ int main(int argc, char ** argv) {
 
 	createSharedMemory();
 
+  #define EMPTY 0
+  #define FULL 1
+
+  semid = sem_get(2,0);
+  sem_setvalue(semid, EMPTY, 1);
+  sem_setvalue(semid, FULL,  0);
+
 	getConfigData(config);
 
 	//AVAILABLE SERVING THREADS
 	availableServingThreads = (int*) malloc( (config->threadpool) * sizeof(int) );
+	threadMessages = (serve_msg_t*) malloc( (config->threadpool) * sizeof(serve_msg_t) );
 
 	//VARIABLES FOR THE THREADPOOL
 	id = (long*) malloc( (config->threadpool + 1) * sizeof(long));
@@ -101,19 +113,21 @@ int main(int argc, char ** argv) {
 		printf("org req: %s conn: %d\n", req_buf, new_conn);
 
 		requestCounter+=1;
+    sem_wait(semid, EMPTY);
 		add_request(request_buffer, requestCounter, new_conn, req_buf);
 		printf("\nREQUEST BUFFER:\n");
 		print_request_buffer(request_buffer);
-	}
+    sem_post(semid, FULL);
+  }
 
 	return 0;
 }
 
-long checkFreeThread() {
+int checkFreeThread() {
 	int i;
 	for(i=0; i < config->threadpool; ++i) {
 		if(availableServingThreads[i] == 0) {
-			return i+1;
+			return i;
 		}
 	}
 	return -1;
@@ -122,41 +136,52 @@ long checkFreeThread() {
 //TO DO-> create scheduler function
 //TEST: send message  to turn on scheduler and serving threads instead of variable
 void *scheduler(void* id_ptr) {
-	serve_msg_t msg;
-	while(schedulerOn) {
+	/*while(schedulerOn) {
 		//TO DO-> nao remover da lista mas ficar com o id do request e depois de servido apaga-lo da lista
 		//FOR FIFO ONLY
+		int mtype;
+
+    sem_wait(semid,0);
 		remove_request(&request_buffer,&request);
+    sem_wait(semid,0);
+
 		if(request!=NULL && request->conn!=-1) {
 			//TO DO-> create fill message function
-			if( (msg.mtype = checkFreeThread()) != -1 ) {
-				msg.conn = request->conn;
-				strcpy(msg.requiredFile, request->requiredFile);
+			if( (mtype = checkFreeThread()) != -1 ) {
+				threadMessages[mtype].conn = request->conn;
+				strcpy(threadMessages[mtype].requiredFile, request->requiredFile);
+
 				printf("\nREQUEST:\n");
 				print_request_buffer(request);
 				deleteRequestBuffer(&request);
-				printf("\n--- SENDING MESSAGE TO SERVING THREAD %ld ---\n", msg.mtype);
-				msgsnd(messageQueueId, &msg, sizeof(msg)-sizeof(long), 0);
+
+				printf("\n--- SENDING MESSAGE TO SERVING THREAD %d ---\n", mtype+1);
+				printf("MSG\nreq:%s\nconn:%d\n\n", threadMessages[mtype].requiredFile, threadMessages[mtype].conn);
+				availableServingThreads[mtype]=1;
+				msg_sent=mtype+1;
 			} else {
 				printf("No available threads at the moment\n");
 				//TO DO-> Send full server to client
 			}
 		}
-		sleep(3);
 	}
 	#if DEBUG
 	long id = *((long *) id_ptr);
 	printf("Scheduler as thread %ld has ended\n", id);
-	#endif
+	#endif*/
 	pthread_exit(NULL);
 }
 
 //INTIALIZE THREADPOOL
 void createThreadPool() {
-	int i;
+	int i=0;
 	schedulerOn=1;
 
-	for (i = 0; i < config->threadpool; i++) {
+	if(pthread_create(&threads[i], NULL, scheduler, (void *)&id[i])) {
+		printf("Error creating threads\n");
+		shutdown_server(THREADS);
+	}
+	for (i = 1; i < config->threadpool + 1; i++) {
 		id[i] = i;
 		if(pthread_create(&threads[i], NULL, serve, (void *)&id[i])) {
 			printf("Error creating threads\n");
@@ -165,11 +190,6 @@ void createThreadPool() {
 		#if DEBUG
 		printf("Thread %d created\n", (int)id[i]);
 		#endif
-	}
-	id[i]= i;
-	if(pthread_create(&threads[i], NULL, scheduler, (void *)&id[i])) {
-		printf("Error creating threads\n");
-		shutdown_server(THREADS);
 	}
 
 	for(i=0; i < config->threadpool; ++i) {
@@ -194,24 +214,20 @@ void createSharedMemory() {
 //TO DO -> create serve function | change to no wait
 void *serve(void* id_ptr) {
 	long id = *((long *) id_ptr);
-	serve_msg_t msg;
 
+	printf("\n--- WAITING FOR MESSAGE OF TYPE %ld ---\n", id);
 	while(schedulerOn) {
-		printf("\n--- WAITING FOR MESSAGE OF TYPE %ld ---\n", id);
-    msgrcv(messageQueueId, &msg, sizeof(msg)-sizeof(long), id, 0);
-		printf("\n--- RECIEVED MESSAGE AT THREAD %ld ---\n", id);
-		/*if(!strncmp(msg.requiredFile,CGI_EXPR,strlen(CGI_EXPR)))
-			execute_script(msg.conn);
-		else
-			// Search file with html page and send to client
-			strcpy(req_buf,msg.requiredFile);
-			send_page(msg.conn);
-		// Terminate connection with client
-		close(msg.conn);*/
+		if(msg_sent==id) {
+			msg_sent=0;
+			printf("\n--- RECIEVED MESSAGE AT THREAD %ld ---\n", id);
+			printf("MSG\nreq:%s\nconn:%d\n\n", threadMessages[id-1].requiredFile, threadMessages[id-1].conn);
+			strcpy(req_buf,threadMessages[id-1].requiredFile);
+			send_page(threadMessages[id-1].conn);
+			close(threadMessages[id-1].conn);
+			availableServingThreads[id-1]=0;
+		}
 	}
-	#if DEBUG
 	printf("Served thread %ld\n", id);
-	#endif
 	pthread_exit(NULL);
 }
 
@@ -301,14 +317,6 @@ void send_header(int socket) {
 	send(socket,buf,strlen(SERVER_STRING),0);
 	sprintf(buf,HEADER_2);
 	send(socket,buf,strlen(HEADER_2),0);
-
-	return;
-}
-
-// Execute script in /cgi-bin
-void execute_script(int socket) {
-	// Currently unsupported, return error code to client
-	cannot_execute(socket);
 
 	return;
 }
@@ -407,6 +415,7 @@ void joinThreads() {
 	}
 
 	free(availableServingThreads);
+	free(threadMessages);
 	free(threads);
 	free(id);
 	msgctl(messageQueueId, IPC_RMID, NULL);
@@ -457,6 +466,7 @@ void shutdown_server(int option) {
   		joinThreads();
   		desallocateSharedMemory();
   		detatchSharedMemory();
+      sem_close(semid);
 
   		printf("Server terminating\n");
   		close(socket_conn);

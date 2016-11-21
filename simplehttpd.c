@@ -1,7 +1,7 @@
 #include "simplehttpd.h"
 #include "request.h"
 #include "config.h"
-#include "semlib.h"
+#include <semaphore.h>
 
 //REQUEST BUFFER
 request_t *request;
@@ -14,7 +14,10 @@ char buf_tmp[SIZE_BUF];
 int socket_conn,new_conn;
 
 //SEMAPHORES IDS
-int semid;
+sem_t requestBufferSemaphore;
+sem_t startSchedulerSemaphore;
+sem_t availableRequests;
+//TO DO -> create semaphore for each thread
 
 //SHARED MEMORY
 int shmid;
@@ -61,12 +64,11 @@ int main(int argc, char ** argv) {
 
 	createSharedMemory();
 
-  #define EMPTY 0
-  #define FULL 1
-
-  semid = sem_get(2,0);
-  sem_setvalue(semid, EMPTY, 1);
-  sem_setvalue(semid, FULL,  0);
+	//CREATE SEMAPHORES -> Error catcher
+	sem_init(&requestBufferSemaphore, 0, 1);
+	sem_init(&startSchedulerSemaphore, 0, 0);
+	sem_init(&availableRequests, 0, 0);
+	//
 
 	getConfigData(config);
 
@@ -109,15 +111,23 @@ int main(int argc, char ** argv) {
 
 		// Process request
 		get_request(new_conn);
-
-		printf("org req: %s conn: %d\n", req_buf, new_conn);
-
 		requestCounter+=1;
-    sem_wait(semid, EMPTY);
+
+		//Unlock request buffer
+    sem_wait(&requestBufferSemaphore);
+		printf("Added request\n");
+		printf("org req: %s conn: %d\n", req_buf, new_conn);
 		add_request(request_buffer, requestCounter, new_conn, req_buf);
 		printf("\nREQUEST BUFFER:\n");
 		print_request_buffer(request_buffer);
-    sem_post(semid, FULL);
+		//Increases number of available threads
+		sem_post(&availableRequests);
+		//Unlocks request buffer
+    sem_post(&requestBufferSemaphore);
+		//Starts scheduler after first added request
+		int firstRequestAdded;
+		sem_getvalue(&startSchedulerSemaphore, &firstRequestAdded);
+		if(firstRequestAdded == 0) sem_post(&startSchedulerSemaphore);
   }
 
 	return 0;
@@ -136,14 +146,18 @@ int checkFreeThread() {
 //TO DO-> create scheduler function
 //TEST: send message  to turn on scheduler and serving threads instead of variable
 void *scheduler(void* id_ptr) {
-	/*while(schedulerOn) {
+	int mtype;
+	sem_wait(&startSchedulerSemaphore);
+	printf("Started scheduler\n");
+	
+	while(schedulerOn) {
 		//TO DO-> nao remover da lista mas ficar com o id do request e depois de servido apaga-lo da lista
 		//FOR FIFO ONLY
-		int mtype;
 
-    sem_wait(semid,0);
+		sem_wait(&availableRequests);
+		sem_wait(&requestBufferSemaphore);
 		remove_request(&request_buffer,&request);
-    sem_wait(semid,0);
+		sem_post(&requestBufferSemaphore);
 
 		if(request!=NULL && request->conn!=-1) {
 			//TO DO-> create fill message function
@@ -166,9 +180,9 @@ void *scheduler(void* id_ptr) {
 		}
 	}
 	#if DEBUG
-	long id = *((long *) id_ptr);
-	printf("Scheduler as thread %ld has ended\n", id);
-	#endif*/
+	long threadId = *((long *) id_ptr);
+	printf("Scheduler as thread %ld has ended\n", threadId);
+	#endif
 	pthread_exit(NULL);
 }
 
@@ -224,7 +238,7 @@ void *serve(void* id_ptr) {
 			strcpy(req_buf,threadMessages[id-1].requiredFile);
 			send_page(threadMessages[id-1].conn);
 			close(threadMessages[id-1].conn);
-			availableServingThreads[id-1]=0;
+			availableServingThreads[id-1]=1;
 		}
 	}
 	printf("Served thread %ld\n", id);
@@ -418,7 +432,6 @@ void joinThreads() {
 	free(threadMessages);
 	free(threads);
 	free(id);
-	msgctl(messageQueueId, IPC_RMID, NULL);
 }
 
 //DETATCH MEMORY
@@ -466,7 +479,8 @@ void shutdown_server(int option) {
   		joinThreads();
   		desallocateSharedMemory();
   		detatchSharedMemory();
-      sem_close(semid);
+			sem_destroy(&requestBufferSemaphore);
+			sem_destroy(&startSchedulerSemaphore);
 
   		printf("Server terminating\n");
   		close(socket_conn);

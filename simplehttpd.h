@@ -33,7 +33,7 @@ void createSharedMemory();
 void *serve(void* id_ptr);
 void statistics();
 void send_page(int socket);
-void get_request(int socket);
+int get_request(int socket);
 void send_header(int socket);
 void execute_script(int socket);
 void identify(int socket);
@@ -46,6 +46,7 @@ void desallocateSharedMemory();
 void catch_ctrlc(int sig);
 void shutdown_server(int option);
 int read_line(int socket,int n);
+void createSemaphores();
 
 // Produce debug information
 #define DEBUG	  	1

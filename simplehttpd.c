@@ -16,31 +16,27 @@ int socket_conn,new_conn;
 //SEMAPHORES IDS
 sem_t requestBufferSemaphore;
 sem_t startSchedulerSemaphore;
-sem_t availableRequests;
-//TO DO -> create semaphore for each thread
+sem_t *threadSemaphores;
+sem_t requestAvailableSemaphore;
 
 //SHARED MEMORY
 int shmid;
 config_t *config;
 
-//THREADS AND ID ARRAYS
+//THREADS, ID ARRAYS AND THREAD REQUESTS
 long *id;
 pthread_t *threads;
+serve_msg_t *threadRequests;
 
 //STATISTICS PROCESS PID
 pid_t statistics_PID;
 
 //SCHEDULER VARIABLES
-int schedulerOn;
+int exitThreads=0;
 int *availableServingThreads;
-serve_msg_t *threadMessages;
-int messageQueueId;
 
 //REQUEST COUNTER
 int requestCounter=0;
-
-//THREAD CALLED ID
-long msg_sent;
 
 int main(int argc, char ** argv) {
 	struct sockaddr_in client_name;
@@ -64,29 +60,11 @@ int main(int argc, char ** argv) {
 
 	createSharedMemory();
 
-	//CREATE SEMAPHORES -> Error catcher
-	sem_init(&requestBufferSemaphore, 0, 1);
-	sem_init(&startSchedulerSemaphore, 0, 0);
-	sem_init(&availableRequests, 0, 0);
-	//
-
 	getConfigData(config);
 
-	//AVAILABLE SERVING THREADS
-	availableServingThreads = (int*) malloc( (config->threadpool) * sizeof(int) );
-	threadMessages = (serve_msg_t*) malloc( (config->threadpool) * sizeof(serve_msg_t) );
-
-	//VARIABLES FOR THE THREADPOOL
-	id = (long*) malloc( (config->threadpool + 1) * sizeof(long));
-	threads = (pthread_t*) malloc( (config->threadpool + 1) * sizeof(pthread_t));
+	createSemaphores();
 
 	createThreadPool();
-
-	//MESSAGE QUEUE
-	if( (messageQueueId=msgget(IPC_PRIVATE, IPC_CREAT|0766)) == -1 ) {
-    printf("Error creating message queue");
-		shutdown_server(THREADS);
-  }
 
 	signal(SIGINT,catch_ctrlc);
 
@@ -110,24 +88,36 @@ int main(int argc, char ** argv) {
 		identify(new_conn);
 
 		// Process request
-		get_request(new_conn);
-		requestCounter+=1;
+		if(get_request(new_conn)==1 && strcmp(req_buf,"favicon.ico")!=0 ) {
+      #if DEBUG
+      printf("org req: %s conn: %d\n", req_buf, new_conn);
+      printf("--- strcmp: %d ---\n", strcmp(req_buf,"favicon.ico"));
+      #endif
 
-		//Unlock request buffer
-    sem_wait(&requestBufferSemaphore);
-		printf("Added request\n");
-		printf("org req: %s conn: %d\n", req_buf, new_conn);
-		add_request(request_buffer, requestCounter, new_conn, req_buf);
-		printf("\nREQUEST BUFFER:\n");
-		print_request_buffer(request_buffer);
-		//Increases number of available threads
-		sem_post(&availableRequests);
-		//Unlocks request buffer
-    sem_post(&requestBufferSemaphore);
-		//Starts scheduler after first added request
-		int firstRequestAdded;
-		sem_getvalue(&startSchedulerSemaphore, &firstRequestAdded);
-		if(firstRequestAdded == 0) sem_post(&startSchedulerSemaphore);
+  		requestCounter+=1;
+
+  		//Unlock request buffer
+      sem_wait(&requestBufferSemaphore);
+      #if DEBUG
+  		printf("Added request\n");
+      #endif
+  		add_request(request_buffer, requestCounter, new_conn, req_buf);
+  		//printf("\nREQUEST BUFFER:\n");
+  		//print_request_buffer(request_buffer);
+  		//Increases number of available threads
+  		sem_post(&requestAvailableSemaphore);
+  		//Unlocks request buffer
+      sem_post(&requestBufferSemaphore);
+  		//Starts scheduler after first added request
+  		int firstRequestAdded;
+  		sem_getvalue(&startSchedulerSemaphore, &firstRequestAdded);
+  		if(firstRequestAdded == 0) sem_post(&startSchedulerSemaphore);
+    } else if(strcmp(req_buf,"favicon.ico")==0) {
+      #if DEBUG
+        printf("--- Ignored favicon.ico request ---\n");
+      #endif
+      close(new_conn);
+    }
   }
 
 	return 0;
@@ -135,8 +125,11 @@ int main(int argc, char ** argv) {
 
 int checkFreeThread() {
 	int i;
+  printf("--- ");
 	for(i=0; i < config->threadpool; ++i) {
+    printf("%d ", availableServingThreads[i]);
 		if(availableServingThreads[i] == 0) {
+      printf("---\n--- Thread %d available ---\n", i+1);
 			return i;
 		}
 	}
@@ -146,50 +139,117 @@ int checkFreeThread() {
 //TO DO-> create scheduler function
 //TEST: send message  to turn on scheduler and serving threads instead of variable
 void *scheduler(void* id_ptr) {
-	int mtype;
+	int targetedThread;
 	sem_wait(&startSchedulerSemaphore);
-	printf("Started scheduler\n");
-	
-	while(schedulerOn) {
+
+  #if DEBUG
+	printf("--- Started scheduler ---\n");
+  #endif
+
+	while(exitThreads!=1) {
 		//TO DO-> nao remover da lista mas ficar com o id do request e depois de servido apaga-lo da lista
 		//FOR FIFO ONLY
 
-		sem_wait(&availableRequests);
+		sem_wait(&requestAvailableSemaphore);
 		sem_wait(&requestBufferSemaphore);
+    if(exitThreads==1) break;
 		remove_request(&request_buffer,&request);
 		sem_post(&requestBufferSemaphore);
 
 		if(request!=NULL && request->conn!=-1) {
 			//TO DO-> create fill message function
-			if( (mtype = checkFreeThread()) != -1 ) {
-				threadMessages[mtype].conn = request->conn;
-				strcpy(threadMessages[mtype].requiredFile, request->requiredFile);
+			if( (targetedThread = checkFreeThread()) != -1 ) {
+				threadRequests[targetedThread].conn = request->conn;
+				strcpy(threadRequests[targetedThread].requiredFile, request->requiredFile);
 
-				printf("\nREQUEST:\n");
-				print_request_buffer(request);
+				//printf("\nREQUEST:\n");
+				//print_request_buffer(request);
 				deleteRequestBuffer(&request);
 
-				printf("\n--- SENDING MESSAGE TO SERVING THREAD %d ---\n", mtype+1);
-				printf("MSG\nreq:%s\nconn:%d\n\n", threadMessages[mtype].requiredFile, threadMessages[mtype].conn);
-				availableServingThreads[mtype]=1;
-				msg_sent=mtype+1;
+				printf("\n--- SENDING MESSAGE TO SERVING THREAD %d ---\n", targetedThread+1);
+				//printf("MSG\nreq:%s\nconn:%d\n\n", threadMessages[mtype].requiredFile, threadMessages[mtype].conn);
+				availableServingThreads[targetedThread]=1;
+				sem_post(&threadSemaphores[targetedThread]);
 			} else {
 				printf("No available threads at the moment\n");
 				//TO DO-> Send full server to client
 			}
 		}
 	}
-	#if DEBUG
+
+  #if DEBUG
 	long threadId = *((long *) id_ptr);
 	printf("Scheduler as thread %ld has ended\n", threadId);
-	#endif
+  #endif
+
 	pthread_exit(NULL);
+}
+
+//TO DO -> create serve function | change to no wait
+void *serve(void* id_ptr) {
+	long threadId = *((long *) id_ptr);
+
+  #if DEBUG
+	printf("--- WAITING FOR MESSAGE OF TYPE %ld ---\n", threadId);
+  #endif
+
+	while(1) {
+    sem_wait(&threadSemaphores[threadId-1]);
+    if(exitThreads==1) break;
+    #if DEBUG
+		printf("--- RECIEVED MESSAGE AT THREAD %ld ---\n", threadId);
+		printf("MSG\nreq:%s\nconn:%d\n\n", threadRequests[threadId-1].requiredFile, threadRequests[threadId-1].conn);
+    #endif
+		strcpy(req_buf,threadRequests[threadId-1].requiredFile);
+		send_page(threadRequests[threadId-1].conn);
+		close(threadRequests[threadId-1].conn);
+    availableServingThreads[threadId-1]=0;
+	}
+  #if DEBUG
+	printf("Served thread %ld\n", threadId);
+  #endif
+	pthread_exit(NULL);
+}
+
+//TO DO -> create statistics function
+void statistics() {
+	printf("Statistics PID: %d\n", getpid());
+}
+
+//SHARED MEMORY INITIALIZATION
+void createSharedMemory() {
+	shmid = shmget(IPC_PRIVATE,sizeof(config_t),IPC_CREAT|0766);
+	if(shmid==-1) {
+		printf("Error allocating shared memory segment\n");
+		shutdown_server(ALLOCATE_SHARED_MEMORY);
+	}
+	config = shmat(shmid, NULL, 0);
+	if(config == (void *) -1) {
+		printf("Error attatching shared memory\n");
+		shutdown_server(ATTATCH_SHARED_MEMORY);
+	}
+}
+
+//DETATCH MEMORY
+void destroySharedMemory() {
+	if(shmdt(config)==-1) {
+		printf("Error detaching memory\n");
+		return;
+	}
+
+  if(shmctl(shmid,IPC_RMID, NULL)==-1) {
+		printf("Error desalocating shared memory segment\n");
+	}
 }
 
 //INTIALIZE THREADPOOL
 void createThreadPool() {
 	int i=0;
-	schedulerOn=1;
+
+  threadRequests = (serve_msg_t*) malloc( (config->threadpool) * sizeof(serve_msg_t) );
+  id = (long*) malloc( (config->threadpool + 1) * sizeof(long));
+	threads = (pthread_t*) malloc( (config->threadpool + 1) * sizeof(pthread_t));
+  availableServingThreads = (int*) malloc( (config->threadpool) * sizeof(int) );
 
 	if(pthread_create(&threads[i], NULL, scheduler, (void *)&id[i])) {
 		printf("Error creating threads\n");
@@ -211,43 +271,136 @@ void createThreadPool() {
 	}
 }
 
-//SHARED MEMORY INITIALIZATION
-void createSharedMemory() {
-	shmid = shmget(IPC_PRIVATE,sizeof(config_t),IPC_CREAT|0766);
-	if(shmid==-1) {
-		printf("Error allocating shared memory segment\n");
-		shutdown_server(ALLOCATE_SHARED_MEMORY);
+//JOIN THREADS
+void joinThreads() {
+  int i;
+	exitThreads=1;
+
+  sem_post(&startSchedulerSemaphore);
+  sem_post(&requestAvailableSemaphore);
+
+  for (i = 0; i < config->threadpool+1; i++) {
+		sem_post(&threadSemaphores[i]);
 	}
-	config = shmat(shmid, NULL, 0);
-	if(config == (void *) -1) {
-		printf("Error attatching shared memory\n");
-		shutdown_server(ATTATCH_SHARED_MEMORY);
+
+	//Wait for all threads to complete
+	for (i = 0; i < config->threadpool+1; i++) {
+		pthread_join(threads[i], NULL);
 	}
+
+	free(availableServingThreads);
+  free(threadRequests);
+	free(threads);
+	free(id);
 }
 
-//TO DO -> create serve function | change to no wait
-void *serve(void* id_ptr) {
-	long id = *((long *) id_ptr);
+//TO DO-> error tracking
+void createSemaphores() {
+  int i;
 
-	printf("\n--- WAITING FOR MESSAGE OF TYPE %ld ---\n", id);
-	while(schedulerOn) {
-		if(msg_sent==id) {
-			msg_sent=0;
-			printf("\n--- RECIEVED MESSAGE AT THREAD %ld ---\n", id);
-			printf("MSG\nreq:%s\nconn:%d\n\n", threadMessages[id-1].requiredFile, threadMessages[id-1].conn);
-			strcpy(req_buf,threadMessages[id-1].requiredFile);
-			send_page(threadMessages[id-1].conn);
-			close(threadMessages[id-1].conn);
-			availableServingThreads[id-1]=1;
+  threadSemaphores = (sem_t*) malloc( (config->threadpool) * sizeof(sem_t) );
+
+  sem_init(&requestBufferSemaphore, 0, 1);
+  sem_init(&startSchedulerSemaphore, 0, 0);
+  sem_init(&requestAvailableSemaphore, 0, 0);
+  for(i=0;i<config->threadpool;++i) {
+    sem_init(&threadSemaphores[i], 0, 0);
+  }
+}
+
+void destroySemaphores() {
+  int i;
+
+  sem_destroy(&requestBufferSemaphore);
+  sem_destroy(&startSchedulerSemaphore);
+  sem_destroy(&requestAvailableSemaphore);
+  for(i=0;i<config->threadpool;++i) {
+    sem_destroy(&threadSemaphores[i]);
+  }
+
+  free(threadSemaphores);
+}
+
+void catch_ctrlc(int sig) {
+  printf("--- Caught ctrl c ---\n");
+	shutdown_server(SERVER);
+}
+
+// Closes socket before closing
+void shutdown_server(int option) {
+  printf("--- Exited with call %d ---\n", option);
+	#if DEBUG
+	printf("Cleaning up\n");
+	#endif
+
+	//KILL STATISTICS PROCESS
+	kill(statistics_PID, SIGKILL);
+
+	switch(option) {
+    case THREADS:
+		  joinThreads();
+			destroySharedMemory();
+      break;
+  	case ALLOCATE_SHARED_MEMORY:
+  		destroySharedMemory();
+      break;
+  	case ATTATCH_SHARED_MEMORY:
+  		destroySharedMemory();
+      break;
+  	case SERVER:
+  		joinThreads();
+  		destroySharedMemory();
+
+  		printf("Server terminating\n");
+  		close(socket_conn);
+
+  		//FREE VARS
+  		deleteRequestBuffer(&request_buffer);
+      break;
+    default:
+      break;
+	}
+
+	exit(0);
+}
+
+// Reads a line (of at most 'n' bytes) from socket
+int read_line(int socket,int n) {
+	int n_read;
+	int not_eol;
+	int ret;
+	char new_char;
+
+	n_read=0;
+	not_eol=1;
+
+	while (n_read<n && not_eol) {
+		ret = read(socket,&new_char,sizeof(char));
+		if (ret == -1) {
+			printf("Error reading from socket (read_line)");
+			return -1;
+		}
+		else if (ret == 0) {
+			return 0;
+		}
+		else if (new_char=='\r') {
+			not_eol = 0;
+			// consumes next byte on buffer (LF)
+			read(socket,&new_char,sizeof(char));
+			continue;
+		}
+		else {
+			buf[n_read]=new_char;
+			n_read++;
 		}
 	}
-	printf("Served thread %ld\n", id);
-	pthread_exit(NULL);
-}
 
-//TO DO -> create statistics function
-void statistics() {
-	printf("Statistics PID: %d\n", getpid());
+	buf[n_read]='\0';
+	#if DEBUG
+	printf("read_line: new line read from client socket: %s\n",buf);
+	#endif
+
+	return n_read;
 }
 
 //TO DO -> show 404 page if page not found
@@ -274,7 +427,10 @@ void send_page(int socket) {
 		// First send HTTP header back to client
 		send_header(socket);
 
+    #if DEBUG
 		printf("send_page: sending page %s to client\n",buf_tmp);
+    #endif
+
 		while(fgets(buf_tmp,SIZE_BUF,fp))
 			send(socket,buf_tmp,strlen(buf_tmp),0);
 
@@ -287,7 +443,7 @@ void send_page(int socket) {
 }
 
 // Processes request from client
-void get_request(int socket) {
+int get_request(int socket) {
 	int i,j;
 	int found_get;
 
@@ -306,8 +462,8 @@ void get_request(int socket) {
 
 	// Currently only supports GET
 	if(!found_get) {
-		printf("Request from client without a GET\n");
-		shutdown_server(SERVER);
+		printf("--- Request from client without a GET ---\n");
+    return -1;
 	}
 	// If no particular page is requested then we consider htdocs/index.html
 	if(!strlen(req_buf))
@@ -317,7 +473,7 @@ void get_request(int socket) {
 	printf("get_request: client requested the following page: %s\n",req_buf);
 	#endif
 
-	return;
+	return 1;
 }
 
 // Send message header (before html page) to client
@@ -417,119 +573,4 @@ void cannot_execute(int socket) {
 	send(socket,buf, strlen(buf), 0);
 
 	return;
-}
-
-//JOIN THREADS
-void joinThreads() {
-	schedulerOn=0;
-	int i;
-	//Wait for all threads to complete
-	for (i = 0; i < config->threadpool+1; i++) {
-		pthread_join(threads[i], NULL);
-	}
-
-	free(availableServingThreads);
-	free(threadMessages);
-	free(threads);
-	free(id);
-}
-
-//DETATCH MEMORY
-void detatchSharedMemory() {
-	if(shmdt(config)==-1) {
-		printf("Error detaching memory\n");
-		return;
-	}
-}
-
-//DESALLOCATE MEMORY
-void desallocateSharedMemory() {
-	if(shmctl(shmid,IPC_RMID, NULL)==-1) {
-		printf("Error desalocating shared memory segment\n");
-	}
-}
-
-void catch_ctrlc(int sig) {
-	shutdown_server(SERVER);
-}
-
-// Closes socket before closing
-void shutdown_server(int option) {
-	#if DEBUG
-	printf("Cleaning up\n");
-	#endif
-
-	//KILL STATISTICS PROCESS
-	kill(statistics_PID, SIGKILL);
-
-	switch(option) {
-    case THREADS:
-		  joinThreads();
-			desallocateSharedMemory();
-  		detatchSharedMemory();
-      break;
-  	case ALLOCATE_SHARED_MEMORY:
-  		desallocateSharedMemory();
-      break;
-  	case ATTATCH_SHARED_MEMORY:
-  		desallocateSharedMemory();
-  		detatchSharedMemory();
-      break;
-  	case SERVER:
-  		joinThreads();
-  		desallocateSharedMemory();
-  		detatchSharedMemory();
-			sem_destroy(&requestBufferSemaphore);
-			sem_destroy(&startSchedulerSemaphore);
-
-  		printf("Server terminating\n");
-  		close(socket_conn);
-
-  		//FREE VARS
-  		deleteRequestBuffer(&request_buffer);
-      break;
-    default:
-      break;
-	}
-
-	exit(0);
-}
-
-// Reads a line (of at most 'n' bytes) from socket
-int read_line(int socket,int n) {
-	int n_read;
-	int not_eol;
-	int ret;
-	char new_char;
-
-	n_read=0;
-	not_eol=1;
-
-	while (n_read<n && not_eol) {
-		ret = read(socket,&new_char,sizeof(char));
-		if (ret == -1) {
-			printf("Error reading from socket (read_line)");
-			return -1;
-		}
-		else if (ret == 0) {
-			return 0;
-		}
-		else if (new_char=='\r') {
-			not_eol = 0;
-			// consumes next byte on buffer (LF)
-			read(socket,&new_char,sizeof(char));
-			continue;
-		}
-		else {
-			buf[n_read]=new_char;
-			n_read++;
-		}
-	}
-
-	buf[n_read]='\0';
-	#if DEBUG
-	printf("read_line: new line read from client socket: %s\n",buf);
-	#endif
-
-	return n_read;
 }

@@ -1,10 +1,14 @@
-// Produce debug information
-//#define DEBUG	  	1
+#include <stdlib.h>
+#include <string.h>
 
+#define	SERVER_STRING 	"Server: simpleserver/0.1.0\r\n"
+#define HEADER_1	"HTTP/1.0 200 OK\r\n"
+#define HEADER_2	"Content-Type: text/html\r\n\r\n"
+#define GET_EXPR	"GET /"
+#define CGI_EXPR	"cgi-bin/"
 #define SIZE_BUF	1024
 
 typedef struct Requests {
-	int id;
 	int conn;
 	char requiredFile[SIZE_BUF];
 	time_t timeGetRequest;
@@ -25,14 +29,13 @@ void deleteRequestBuffer(request_t **request_buffer) {
 
 request_t *createRequestBuffer(){
   request_t *head = malloc(sizeof(request_t));
-	head->id=-1;
   head->conn = -1;
   strcpy(head->requiredFile, "EMPTY");
   head->next = NULL;
   return head;
 }
 
-void remove_request(request_t **request_buffer, request_t **request_cpy) {
+void remove_request(request_t **request_buffer, request_t **request_cpy, char scheduling[SIZE_BUF]) {
     request_t * next_node = NULL;
 
     if (*request_buffer == NULL || (*request_buffer)->conn == -1) {
@@ -40,26 +43,29 @@ void remove_request(request_t **request_buffer, request_t **request_cpy) {
         return;
     }
 
-    if( (next_node = (*request_buffer)->next) == NULL ) {
-			next_node = createRequestBuffer();
+		if( !strcmp(scheduling,"NORMAL") ) {
+	    if( (next_node = (*request_buffer)->next) == NULL ) {
+				next_node = createRequestBuffer();
+			}
+
+			if(!strcmp(scheduling,"FIFO")) {
+		    *request_cpy = *request_buffer;
+				(*request_cpy)->next=NULL;
+		    *request_buffer = next_node;
+			}
 		}
-    *request_cpy = *request_buffer;
-		(*request_cpy)->next=NULL;
-    *request_buffer = next_node;
 }
 
-//TO DO -> complete function
 void print_request_buffer(request_t *request_buffer) {
     request_t *current = request_buffer;
 
     while (current != NULL) {
-      printf("id: %d conn: %d req: %s\n", current->id, current->conn, current->requiredFile);
+      printf("conn: %d req: %s\n", current->conn, current->requiredFile);
       current = current->next;
     }
 }
 
-//TO DO -> complete function
-void add_request(request_t *request_buffer, int id, int conn, char requiredFile[SIZE_BUF]) {
+void add_request(request_t *request_buffer, int conn, char requiredFile[SIZE_BUF]) {
     request_t* current = request_buffer;
 
     if(current == NULL) {
@@ -70,14 +76,12 @@ void add_request(request_t *request_buffer, int id, int conn, char requiredFile[
     if( (current->conn) == -1) {
       current->conn = conn;
       strcpy(current->requiredFile, requiredFile);
-			current->id = id;
     } else {
       while (current->next != NULL) {
           current = current->next;
       }
       current->next = malloc(sizeof(request_t));
       current->next->conn = conn;
-			current->next->id = id;
       strcpy(current->next->requiredFile,requiredFile);
       current->next->next = NULL;
     }

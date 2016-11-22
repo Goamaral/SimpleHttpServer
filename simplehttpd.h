@@ -1,3 +1,9 @@
+#include <semaphore.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include "config.h"
+#include "request.h"
+
 #include <stdio.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -18,21 +24,28 @@
 #include <sys/types.h>
 #include <sys/msg.h>
 
-// Header of HTTP reply to client
-#define	SERVER_STRING 	"Server: simpleserver/0.1.0\r\n"
-#define HEADER_1	"HTTP/1.0 200 OK\r\n"
-#define HEADER_2	"Content-Type: text/html\r\n\r\n"
-
-#define GET_EXPR	"GET /"
-#define CGI_EXPR	"cgi-bin/"
+#define DEBUG	  	1
 #define SIZE_BUF	1024
-#define MAX_ALLOWED 10
+#define FAST_EXIT 0
+#define CLEAN_SHARED_MEMORY 1
+#define CLEAN_SEMAPHORES 2
+#define CLEAN_THREADS 3
+#define CLEAN_SERVER 4
 
-void createThreadPool();
-void createSharedMemory();
+typedef struct {
+	int id;
+  int conn;
+  char requiredFile[SIZE_BUF];
+  time_t timeGetRequest;
+} serve_msg_t;
+
+int createThreadPool();
 void *serve(void* id_ptr);
+void *scheduler(void* id_ptr);
+int createSharedMemory();
+void destroySharedMemory();
 void statistics();
-void send_page(int socket);
+void send_page(int socket, char req_buf[SIZE_BUF]);
 int get_request(int socket);
 void send_header(int socket);
 void execute_script(int socket);
@@ -46,21 +59,4 @@ void desallocateSharedMemory();
 void catch_ctrlc(int sig);
 void shutdown_server(int option);
 int read_line(int socket,int n);
-void createSemaphores();
-
-// Produce debug information
-#define DEBUG	  	1
-
-//ERROR MACROS
-#define THREADS 0
-#define ALLOCATE_SHARED_MEMORY 1
-#define ATTATCH_SHARED_MEMORY 2
-#define SERVER 3
-#define PID 4
-
-typedef struct {
-	int id;
-  int conn;
-  char requiredFile[SIZE_BUF];
-  time_t timeGetRequest;
-} serve_msg_t;
+int createSemaphores();

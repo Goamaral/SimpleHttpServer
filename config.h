@@ -1,5 +1,10 @@
-// Produce debug information
-//#define DEBUG	  	1
+#include <time.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+
+#define SIZE_BUF	1024
+#define MAX_ALLOWED 10
 
 typedef struct Config {
   int port;
@@ -12,14 +17,14 @@ typedef struct Config {
 char buf[SIZE_BUF];
 
 int isNumber(char buff[SIZE_BUF]);
-void readParam(FILE *file);
-void printInvalidConfigFile(void);
-void getConfigData(config_t *config);
+int readParam(FILE *file);
+int printInvalidConfigFile(void);
+int getConfigData(config_t *config);
 void setAllowedFiles(char* str, char arr[MAX_ALLOWED][SIZE_BUF]);
 
 
 // Read value of property from config file
-void readParam(FILE *file) {
+int readParam(FILE *file) {
 	int i=0;
 	char c;
 	int count = 0;
@@ -28,7 +33,7 @@ void readParam(FILE *file) {
 		 c = fgetc(file);
 		 if( feof(file) || c=='\n' ) {
 			 if(count==0) {
-				 printInvalidConfigFile();
+				 return -1;
 			 }
 			 buf[i++]='\0';
 			 count = 0;
@@ -37,17 +42,18 @@ void readParam(FILE *file) {
 		 if(count == 1) buf[i++]=c;
 		 if(c=='=') count=1;
 	} while(1);
+	return 0;
 }
 
 // Print invalid config file and exit
-void printInvalidConfigFile(void) {
+int printInvalidConfigFile(void) {
 	printf("\nMissing assignment = sign in one of the attributions in the config file\nConfig file must be of the following format:\n\n");
 	printf("SERVERPORT=(port) -> Example:1234\n");
 	printf("SCHEDULING=(schedule type) -> Example:NORMAL\n");
 	printf("THREADPOOL=(number of threads) -> Example:5\n");
 	printf("ALLLOWED=(allowed file names seperated by ; sign) -> file_a.html;file_b.html\n");
 	printf("\nOnly .html and .hmtl.gz files supported\n\n");
-  shutdown_server(PID);
+  return -1;
 }
 
 int isNumber(char* string){
@@ -64,17 +70,15 @@ int isNumber(char* string){
     return 1;
 }
 
-void getConfigData(config_t *config) {
-  //READ CONFIG FILE
-
+int getConfigData(config_t *config) {
 	FILE *file = fopen("config.txt","r");
-	if(file == NULL) printInvalidConfigFile();
+	if(file == NULL) return printInvalidConfigFile();
 
 	 // Read port
-	 readParam(file);
+	 if( readParam(file) == -1 ) return printInvalidConfigFile();
 	 if( !isNumber(buf) ) {
-		 printf("Invalid port value\n");
-     shutdown_server(PID);
+		 printf("--- Invalid port value ---\n");
+     return -1;
 	 }
 	 config->port=atoi(buf);
 	 #if DEBUG
@@ -82,22 +86,26 @@ void getConfigData(config_t *config) {
 	 #endif
 
 	 //Read scheduling
-	 readParam(file);
+	 if( readParam(file) == -1 ) return printInvalidConfigFile();
+
+   /*
 	 //TO DO -> create inStringArray function
-	 /*if( !inStringArray(buf) ) {
+	 if( !inStringArray(buf) ) {
 		 printf("Invalid scheduling mode");
 		 exit(1);
- 	 }*/
+ 	 }
+   */
+
 	 strcpy(config->scheduling,buf);
 	 #if DEBUG
 	 printf("scheduling: %s\n", config->scheduling);
 	 #endif
 
 	 //Read threadpool
-	 readParam(file);
+	 if( readParam(file) == -1 ) return printInvalidConfigFile();
 	 if( !isNumber(buf) || atoi(buf)==0) {
 		 printf("Invalid number of threads\n");
-     shutdown_server(PID);
+     return -1;
 	 }
 	 config->threadpool = atoi(buf);
 	 #if DEBUG
@@ -105,13 +113,14 @@ void getConfigData(config_t *config) {
 	 #endif
 
    //Read allowed files
- 	 readParam(file);
+	 if( readParam(file) == -1 ) return printInvalidConfigFile();
  	 setAllowedFiles(buf, config->allowed);
  	 #if DEBUG
  	 printf("Allowed files: %s; %s\n", config->allowed[0], config->allowed[1]);
  	 #endif
 
  	 fclose(file);
+	 return 0;
 }
 
 // Set array of strings from string

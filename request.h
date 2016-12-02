@@ -43,15 +43,25 @@ void remove_request(request_t **request_buffer, request_t **request_cpy, char sc
         return;
     }
 
+		printf("strcmp: %d\n", strcmp(scheduling,"NORMAL"));
+
 		if( !strcmp(scheduling,"NORMAL") ) {
 	    if( (next_node = (*request_buffer)->next) == NULL ) {
 				next_node = createRequestBuffer();
 			}
 
-			if(!strcmp(scheduling,"FIFO")) {
+			if(!strcmp(scheduling,"NORMAL")) {
 		    *request_cpy = *request_buffer;
 				(*request_cpy)->next=NULL;
 		    *request_buffer = next_node;
+			}
+
+			if(!strcmp(scheduling,"COMPRESSED")) {
+
+			}
+
+			if(!strcmp(scheduling,"STATIC")) {
+
 			}
 		}
 }

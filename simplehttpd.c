@@ -217,106 +217,101 @@ void joinThreads() {
 }
 
 void *scheduler(void *id_ptr) {
-  int targetedThread;
-  sem_wait(&startSchedulerSemaphore);
+    int targetedThread;
+    sem_wait(&startSchedulerSemaphore);
 
-#if DEBUG
-  printf("--- Started scheduler %d ---\n", exitThreads);
-#endif
+    #if DEBUG
+    printf("--- Started scheduler %d ---\n", exitThreads);
+    #endif
 
-  while (exitThreads != 1) {
-    sem_wait(&requestAvailableSemaphore);
-    sem_wait(&requestBufferSemaphore);
-    // if(exitThreads==1) break;
-    remove_request(&request_buffer, &request, config->scheduling);
-    sem_post(&requestBufferSemaphore);
+    while (exitThreads != 1) {
+        sem_wait(&requestAvailableSemaphore);
+        sem_wait(&requestBufferSemaphore);
+        if(exitThreads==1) break;
+        remove_request(&request_buffer, &request, config->scheduling);
+        sem_post(&requestBufferSemaphore);
 
-    if (request != NULL && request->conn != -1) {
-      if ((targetedThread = checkFreeThread()) != -1) {
-        threadRequests[targetedThread].conn = request->conn;
-        strcpy(threadRequests[targetedThread].requiredFile,
-               request->requiredFile);
+        if (request != NULL && request->conn != -1) {
+            if ((targetedThread = checkFreeThread()) != -1) {
+                threadRequests[targetedThread].conn = request->conn;
+                strcpy(threadRequests[targetedThread].requiredFile, request->requiredFile);
 
-        deleteRequestBuffer(&request);
+                deleteRequestBuffer(&request);
 
-        printf("\n--- SENDING MESSAGE TO SERVING THREAD %d ---\n",
-               targetedThread + 1);
-        availableServingThreads[targetedThread] = 1;
-        sem_post(&threadSemaphores[targetedThread]);
-      } else {
-        printf("No available threads at the moment\n");
-        send_page(request->conn, "server_overload.html");
-        close(request->conn);
-      }
+                printf("\n--- SENDING MESSAGE TO SERVING THREAD %d ---\n", targetedThread + 1);
+                availableServingThreads[targetedThread] = 1;
+                sem_post(&threadSemaphores[targetedThread]);
+            } else {
+                printf("No available threads at the moment\n");
+                send_page(request->conn, "server_overload.html");
+                close(request->conn);
+            }
+        }
     }
-  }
 
-#if DEBUG
-  long threadId = *((long *)id_ptr);
-  printf("Scheduler as thread %ld has ended\n", threadId);
-#endif
+    #if DEBUG
+    long threadId = *((long *)id_ptr);
+    printf("Scheduler as thread %ld has ended\n", threadId);
+    #endif
 
-  pthread_exit(NULL);
+    pthread_exit(NULL);
 }
 
 void *consoleConnect(void *id_ptr) {
-  namedpipe = open(PIPE_NAME, O_RDONLY);
+    namedpipe = open(PIPE_NAME, O_RDONLY);
 
-  while (1) {
-    if (exitThreads == 1)
-      break;
+    while (1) {
+        if (exitThreads == 1) break;
 
-    new_config = (config_t *)malloc(sizeof(config_t));
+        new_config = (config_t *)malloc(sizeof(config_t));
 
-    // wait for console command
-    read(namedpipe, new_config, sizeof(config_t));
+        // wait for console command
+        read(namedpipe, new_config, sizeof(config_t));
 
-    free(new_config);
-    printf("");
-  }
+        free(new_config);
+        //printf("");
+    }
 
-  unlink(PIPE_NAME);
+    unlink(PIPE_NAME);
 
-  pthread_exit(NULL);
+    pthread_exit(NULL);
 }
 
 void *serve(void *id_ptr) {
-  long threadId = *((long *)id_ptr);
+    long threadId = *((long *)id_ptr);
 
-#if DEBUG
-  printf("--- WAITING FOR MESSAGE OF TYPE %ld ---\n", threadId);
-#endif
+    #if DEBUG
+    printf("--- WAITING FOR MESSAGE OF TYPE %ld ---\n", threadId);
+    #endif
 
-  while (1) {
-    sem_wait(&threadSemaphores[threadId - 1]);
-    if (exitThreads == 1)
-      break;
+    while (1) {
+        sem_wait(&threadSemaphores[threadId - 1]);
+        if (exitThreads == 1) break;
 
-#if DEBUG
-    printf("--- RECIEVED MESSAGE AT THREAD %ld ---\n", threadId);
-    printf("MSG\nreq:%s\nconn:%d\n\n",
-           threadRequests[threadId - 1].requiredFile,
-           threadRequests[threadId - 1].conn);
-#endif
+        #if DEBUG
+        printf("--- RECIEVED MESSAGE AT THREAD %ld ---\n", threadId);
+        printf("MSG\nreq:%s\nconn:%d\n\n", threadRequests[threadId - 1].requiredFile, threadRequests[threadId - 1].conn);
+        #endif
 
-    send_page(threadRequests[threadId - 1].conn,
-              threadRequests[threadId - 1].requiredFile);
+        send_page(threadRequests[threadId - 1].conn,
+        threadRequests[threadId - 1].requiredFile);
+        close(threadRequests[threadId - 1].conn);
+
+        #if SLEEP
+        sleep(10);
+        #endif
+
+        printf("--- THREAD %ld FREE AGAIN ---\n", threadId);
+        availableServingThreads[threadId - 1] = 0;
+    }
+    
     close(threadRequests[threadId - 1].conn);
 
-#if SLEEP
-    sleep(10);
-#endif
+    #if DEBUG
+    printf("Served thread %ld\n", threadId);
+    #endif
 
-    printf("--- THREAD %ld FREE AGAIN ---\n", threadId);
-    availableServingThreads[threadId - 1] = 0;
-  }
-  close(threadRequests[threadId - 1].conn);
-
-#if DEBUG
-  printf("Served thread %ld\n", threadId);
-#endif
-
-  pthread_exit(NULL);
+    pthread_exit(NULL);
 }
 
 // TO DO -> create statistics function

@@ -44,6 +44,7 @@ typedef struct {
 int createNamedPipe();
 int createThreadPool();
 void *serve(void *id_ptr);
+void *consoleConnect(void *id_ptr);
 void *scheduler(void *id_ptr);
 int createSharedMemory();
 void destroySharedMemory();

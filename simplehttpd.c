@@ -1,5 +1,8 @@
 #include "simplehttpd.h"
-// TO DO-> insert baby protection
+// TODO -> insert baby protection
+// TODO -> assign ctrl + c signal to statistics process
+// TODO -> create othre type of schedules
+// TODO -> separate create/join scheduler and console from other threads
 
 // REQUEST BUFFER
 request_t *request;
@@ -40,110 +43,119 @@ int exitThreads;
 int *availableServingThreads;
 
 int main(int argc, char **argv) {
-  struct sockaddr_in client_name;
-  socklen_t client_name_len = sizeof(client_name);
+	struct sockaddr_in client_name;
+	socklen_t client_name_len = sizeof(client_name);
 
-  // CREATE STATISTICS PROCESS
-  if ((statistics_PID = fork()) == 0) {
-    statistics();
-    exit(0);
-  } else {
-    if (statistics_PID == -1) {
-      printf("Error creating statistics process\n");
-      shutdown_server(FAST_EXIT);
-    }
-    printf("Main PID: %d\n", getpid());
-  }
+	// CREATE STATISTICS PROCESS
+	if ((statistics_PID = fork()) == 0) {
+		statistics();
+		exit(0);
+	} else {
+		if (statistics_PID == -1) {
+			printf("Error creating statistics process\n");
+			shutdown_server(FAST_EXIT);
+		}
+		printf("Main PID: %d\n", getpid());
+	}
 
-  createNamedPipe();
+	createNamedPipe();
 
-  config = (config_t *)malloc(sizeof(config_t));
+	config = (config_t *)malloc(sizeof(config_t));
 
-  if (getConfigData(config) == -1) {
-    shutdown_server(FAST_EXIT_2);
-  }
+	if (getConfigData(config) == -1) {
+		shutdown_server(FAST_EXIT_2);
+	}
 
-  if (createSharedMemory() == -1) {
-    shutdown_server(CLEAN_SHARED_MEMORY);
-  }
+	if (createSharedMemory() == -1) {
+		shutdown_server(CLEAN_SHARED_MEMORY);
+	}
 
-  if (createSemaphores() == -1) {
-    shutdown_server(CLEAN_SEMAPHORES);
-  }
+	if (createSemaphores() == -1) {
+		shutdown_server(CLEAN_SEMAPHORES);
+	}
 
-  exitThreads = 0;
+	exitThreads = 0;
 
-  if (createThreadPool() == -1) {
-    shutdown_server(CLEAN_THREADS);
-  }
+	if (createThreadPool() == -1) {
+		shutdown_server(CLEAN_THREADS);
+	}
 
-  printf("Listening for HTTP requests on port %d\n", config->port);
+	printf("Listening for HTTP requests on port %d\n", config->port);
 
-  // Configure listening port
-  if ((socket_conn = fireup(config->port)) == -1) {
-    shutdown_server(CLEAN_THREADS);
-  }
+	// Configure listening port
+	if ((socket_conn = fireup(config->port)) == -1) {
+		shutdown_server(CLEAN_THREADS);
+	}
 
-  // CREATE REQUEST BUFFER AND SINGLE REQUEST NODE
-  request = createRequestBuffer(request);
-  request_buffer = createRequestBuffer(request_buffer);
+	// CREATE REQUEST BUFFER AND SINGLE REQUEST NODE
+	request = createRequestBuffer(request);
+	request_buffer = createRequestBuffer(request_buffer);
 
-  signal(SIGINT, catch_ctrlc);
+	signal(SIGINT, catch_ctrlc);
 
-  // Serve requests
-  while (1) {
-    // Accept connection on socket
-    if ((new_conn = accept(socket_conn, (struct sockaddr *)&client_name,
+	// Serve requests
+	while (1) {
+		// Accept connection on socket
+		if ((new_conn = accept(socket_conn, (struct sockaddr *)&client_name,
                            &client_name_len)) == -1) {
-      printf("Error accepting connection\n");
-      shutdown_server(CLEAN_THREADS);
-    }
+		printf("Error accepting connection\n");
+		shutdown_server(CLEAN_THREADS);
+	}
 
-    // Identify new client
-    identify(new_conn);
+	// Identify new client
+	identify(new_conn);
 
-    // Process request
-    if (get_request(new_conn) == 1 && strcmp(req_buf, "favicon.ico") != 0) {
-#if DEBUG
-      printf("org req: %s conn: %d\n", req_buf, new_conn);
-#endif
+	// Process request
+	if (get_request(new_conn) == 1 && strcmp(req_buf, "favicon.ico") != 0) {
+		#if DEBUG
+		printf("org req: %s conn: %d\n", req_buf, new_conn);
+		#endif
 
-      // Unlock request buffer
-      sem_wait(&requestBufferSemaphore);
-      add_request(request_buffer, new_conn, req_buf);
-#if DEBUG
-      printf("Added request\n");
-      printf("\nREQUEST BUFFER:\n");
-      print_request_buffer(request_buffer);
-#endif
-      // Increases number of available threads
-      sem_post(&requestAvailableSemaphore);
-      // Unlocks request buffer
-      sem_post(&requestBufferSemaphore);
-      // Starts scheduler after first added request
-      int firstRequestAdded;
-      sem_getvalue(&startSchedulerSemaphore, &firstRequestAdded);
-      if (firstRequestAdded == 0)
-        sem_post(&startSchedulerSemaphore);
-    } else if (strcmp(req_buf, "favicon.ico") == 0) {
-#if DEBUG
-      printf("--- Ignored favicon.ico request ---\n");
-#endif
-      close(new_conn);
-    }
-  }
+		// Unlock request buffer
+		sem_wait(&requestBufferSemaphore);
+		add_request(request_buffer, new_conn, req_buf);
 
-  return 0;
+		#if DEBUG
+		printf("Added request\n");
+		printf("\nREQUEST BUFFER:\n");
+		print_request_buffer(request_buffer);
+		#endif
+
+		// Increases number of available threads
+		sem_post(&requestAvailableSemaphore);
+
+		// Unlocks request buffer
+		sem_post(&requestBufferSemaphore);
+
+		// Starts scheduler after first added request
+		int firstRequestAdded;
+		sem_getvalue(&startSchedulerSemaphore, &firstRequestAdded);
+		if (firstRequestAdded == 0)
+			sem_post(&startSchedulerSemaphore);
+		} else if (strcmp(req_buf, "favicon.ico") == 0) {
+			#if DEBUG
+			printf("--- Ignored favicon.ico request ---\n");
+			#endif
+			close(new_conn);
+		}
+	}
+	return 0;
 }
 
 int createNamedPipe() {
-  // Creates the named pipe if it doesn't exist yet
-  if ((mkfifo(PIPE_NAME, O_CREAT | O_EXCL | 0766) < 0) && (errno != EEXIST)) {
-    printf("Couldnt create the namedpipe\n");
-    shutdown_server(FAST_EXIT_2);
-  }
+	// Creates the named pipe if it doesn't exist yet
+	if ((mkfifo(PIPE_NAME, O_CREAT | O_EXCL | 0766) < 0) && (errno != EEXIST)) {
+		printf("Couldnt create the namedpipe\n");
+		shutdown_server(FAST_EXIT_2);
+	}
 
-  return 0;
+	#if DEBUG
+	else {
+		printf("Named pipe created\n");
+	}
+	#endif
+
+	return 0;
 }
 
 int checkFreeThread() {
@@ -160,60 +172,75 @@ int checkFreeThread() {
 }
 
 int createThreadPool() {
-  int i = 0;
+    int i = 0;
 
-  threadRequests =
-      (serve_msg_t *)malloc((config->threadpool) * sizeof(serve_msg_t));
-  id = (long *)malloc((config->threadpool + 2) * sizeof(long));
-  threads = (pthread_t *)malloc((config->threadpool + 2) * sizeof(pthread_t));
-  availableServingThreads = (int *)malloc((config->threadpool) * sizeof(int));
+    threadRequests = (serve_msg_t *)malloc((config->threadpool) * sizeof(serve_msg_t));
+    id = (long *)malloc((config->threadpool + 2) * sizeof(long));
+    threads = (pthread_t *)malloc((config->threadpool + 2) * sizeof(pthread_t));
+    availableServingThreads = (int *)malloc((config->threadpool) * sizeof(int));
+    
+    id[i]=i;
 
-  if (pthread_create(&threads[i], NULL, scheduler, (void *)&id[i])) {
-    printf("Error creating scheduler\n");
-    return -1;
-  }
-  for (i = 1; i < config->threadpool + 1; i++) {
-    id[i] = i;
-    if (pthread_create(&threads[i], NULL, serve, (void *)&id[i])) {
-      printf("Error creating threads\n");
-      return -1;
+    if (pthread_create(&threads[i], NULL, scheduler, (void *)&id[i])) {
+        printf("Error creating scheduler\n");
+        return -1;
     }
-#if DEBUG
-    printf("Thread %d created\n", (int)id[i]);
-#endif
-  }
+    #if DEBUG
+    else {
+        printf("--- Scheduler created ---\n");
+    }
+    #endif
+    
+    for (i = 1; i < config->threadpool + 1; i++) {
+        id[i] = i;
+        if (pthread_create(&threads[i], NULL, serve, (void *)&id[i])) {
+            printf("Error creating threads\n");
+            return -1;
+        }
 
-  if (pthread_create(&threads[i], NULL, consoleConnect, (void *)&id[i])) {
-    printf("Error creating consoleConnect\n");
-    return -1;
-  }
+        #if DEBUG
+        printf("Thread %d created\n", (int)id[i]);
+        #endif
+    }
+    
+    id[i]=i;
 
-  for (i = 0; i < config->threadpool; ++i) {
-    availableServingThreads[i] = 0;
-  }
-  return 0;
+    if (pthread_create(&threads[i], NULL, consoleConnect, (void *)&id[i])) {
+        printf("Error creating consoleConnect\n");
+        return -1;
+    }
+    #if DEBUG 
+    else {
+        printf("--- Console Connect created ---\n");
+    }
+    #endif
+
+    for (i = 0; i < config->threadpool; ++i) {
+        availableServingThreads[i] = 0;
+    }
+    return 0;
 }
 
 void joinThreads() {
-  int i;
-  exitThreads = 1;
+    int i;
+    exitThreads = 1;
 
-  sem_post(&startSchedulerSemaphore);
-  sem_post(&requestAvailableSemaphore);
+    sem_post(&startSchedulerSemaphore);
+    sem_post(&requestAvailableSemaphore);
 
-  for (i = 0; i < config->threadpool + 1; i++) {
-    sem_post(&threadSemaphores[i]);
-  }
+    for (i = 0; i < config->threadpool + 1; ++i) {
+        sem_post(&threadSemaphores[i]);
+    }
 
-  // Wait for all threads to complete
-  for (i = 0; i < config->threadpool + 2; i++) {
-    pthread_join(threads[i], NULL);
-  }
+    // Wait for all threads to complete
+    for (i = 0; i < config->threadpool + 2; ++i) {
+        pthread_join(threads[i], NULL);
+    }
 
-  free(availableServingThreads);
-  free(threadRequests);
-  free(threads);
-  free(id);
+    free(availableServingThreads);
+    free(threadRequests);
+    free(threads);
+    free(id);
 }
 
 void *scheduler(void *id_ptr) {
@@ -221,7 +248,7 @@ void *scheduler(void *id_ptr) {
     sem_wait(&startSchedulerSemaphore);
 
     #if DEBUG
-    printf("--- Started scheduler %d ---\n", exitThreads);
+    printf("--- Started scheduler ---\n");
     #endif
 
     while (exitThreads != 1) {
@@ -258,21 +285,52 @@ void *scheduler(void *id_ptr) {
 }
 
 void *consoleConnect(void *id_ptr) {
-    namedpipe = open(PIPE_NAME, O_RDONLY);
+    int err;
+    char command[SIZE_BUF];
+
+    #if DEBUG
+    printf("--- Console Connect started ---\n");
+    #endif
+
+	if( (namedpipe = open(PIPE_NAME, O_RDONLY|O_NONBLOCK)) == -1 ) {
+        printf("Error creating named pipe\n");
+        pthread_exit(0);
+    }
 
     while (1) {
         if (exitThreads == 1) break;
 
         new_config = (config_t *)malloc(sizeof(config_t));
 
-        // wait for console command
-        read(namedpipe, new_config, sizeof(config_t));
-
-        free(new_config);
-        //printf("");
+        // read console command
+        while( (err = read(namedpipe, command, SIZE_BUF * sizeof(char))) != 0);
+        // checks if console command exists or was saved successfully
+        if(err == -1) {
+            #if DEBUG
+            printf("Error reading command\n");
+            #endif
+        } else if(!strcmp(command, "")) {
+            #if DEBUG
+            //printf("Command not inserted\n");
+            #endif
+        } else {
+            #if DEBUG
+            printf("Command read: %s\n", command);
+            #endif
+        	new_config = (config_t*)malloc(sizeof(config_t));
+        	
+        	
+        	free(new_config);
+        }
     }
+    
+    close(namedpipe);
 
     unlink(PIPE_NAME);
+
+    #if DEBUG
+    long threadId =*((long*)id_ptr); printf("--- Console Connect at thread %ld has ended ---\n", threadId);
+    #endif
 
     pthread_exit(NULL);
 }
@@ -389,7 +447,7 @@ void shutdown_server(int op) {
     deleteRequestBuffer(&request_buffer);
   case CLEAN_THREADS:
     joinThreads();
-  case CLEAN_SEMAPHORES:
+  /*case CLEAN_SEMAPHORES:
     destroySemaphores();
   case CLEAN_SHARED_MEMORY:
     destroySharedMemory();
@@ -397,7 +455,7 @@ void shutdown_server(int op) {
     free(config);
     kill(statistics_PID, SIGKILL);
   case FAST_EXIT:
-    break;
+    break;*/
   }
 
   exit(op + 1);

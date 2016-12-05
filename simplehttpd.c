@@ -285,45 +285,52 @@ void *scheduler(void *id_ptr) {
 }
 
 void *consoleConnect(void *id_ptr) {
-    int err;
-    char command[SIZE_BUF];
+	int err;
+	char command[SIZE_BUF];
+	char operation[SIZE_BUF];
 
-    #if DEBUG
-    printf("--- Console Connect started ---\n");
-    #endif
+	#if DEBUG
+	printf("--- Console Connect started ---\n");
+	#endif
 
 	if( (namedpipe = open(PIPE_NAME, O_RDONLY|O_NONBLOCK)) == -1 ) {
-        printf("Error creating named pipe\n");
-        pthread_exit(0);
-    }
+		printf("Error creating named pipe\n");
+		pthread_exit(0);
+	}
 
-    while (1) {
-        if (exitThreads == 1) break;
+	while (1) {
+		if (exitThreads == 1) break;
 
-        new_config = (config_t *)malloc(sizeof(config_t));
+		new_config = (config_t *)malloc(sizeof(config_t));
 
-        // read console command
-        while( (err = read(namedpipe, command, SIZE_BUF * sizeof(char))) != 0);
-        // checks if console command exists or was saved successfully
-        if(err == -1) {
-            #if DEBUG
-            printf("Error reading command\n");
-            #endif
-        } else if(!strcmp(command, "")) {
-            #if DEBUG
-            //printf("Command not inserted\n");
-            #endif
-        } else {
-            #if DEBUG
-            printf("Command read: %s\n", command);
-            #endif
-        	new_config = (config_t*)malloc(sizeof(config_t));
-        	
-        	
-        	free(new_config);
-        }
-    }
-    
+		// read console command
+		while( (err = read(namedpipe, command, SIZE_BUF * sizeof(char))) != 0);
+		// checks if console command exists or was saved successfully
+		if(err == -1) {
+			#if DEBUG
+			printf("Error reading command\n");
+			#endif
+		} else if(!strcmp(command, "")) {
+			#if DEBUG
+			//printf("Command not inserted\n");
+			#endif
+		} else {
+			#if DEBUG
+			printf("Command read: %s\n", command);
+			#endif
+
+			sscanf(command, "%s %s", operation, extra);
+
+			new_config = (config_t*)malloc(sizeof(config_t));
+
+			new_config->port = config->port;
+
+			//TODO -> check command and change new config
+
+			free(new_config);
+		}
+	}
+
     close(namedpipe);
 
     unlink(PIPE_NAME);

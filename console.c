@@ -2,17 +2,21 @@
 #include "simplehttpd.h"
 #include <string.h>
 
-#define N_HELPERS  1
+#define N_HELPERS  3
+
+//TODO -> add command syntax check
 
 void printHelp() {
-	char helpCommands[N_HELPERS][SIZE_BUF] = {"No help commands inserted"};
+	char helpCommands[N_HELPERS][SIZE_BUF] = {" schedule <mode>\n\t-> mormal\n\t-> compressed\n\t-> static", " threadpool <number>", " allowed <filenames...>"};
 	int i = 0;
 
 	while(i<N_HELPERS) {
-		printf("%s\n", helpCommands[i]);
+		printf("%s\n\n", helpCommands[i]);
 		++i;
 	}
 }
+
+
 
 int main() {
 	char command[SIZE_BUF];

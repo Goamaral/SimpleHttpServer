@@ -299,6 +299,10 @@ void *consoleConnect(void *id_ptr) {
 		pthread_exit(0);
 	}
 
+	#if DEBUG
+	printf("Named pipe created\n");
+	#endif
+
 	while (1) {
 		if (exitThreads == 1) break;
 

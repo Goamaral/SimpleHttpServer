@@ -178,7 +178,7 @@ int createThreadPool() {
     id = (long *)malloc((config->threadpool + 2) * sizeof(long));
     threads = (pthread_t *)malloc((config->threadpool + 2) * sizeof(pthread_t));
     availableServingThreads = (int *)malloc((config->threadpool) * sizeof(int));
-    
+
     id[i]=i;
 
     if (pthread_create(&threads[i], NULL, scheduler, (void *)&id[i])) {
@@ -190,7 +190,7 @@ int createThreadPool() {
         printf("--- Scheduler created ---\n");
     }
     #endif
-    
+
     for (i = 1; i < config->threadpool + 1; i++) {
         id[i] = i;
         if (pthread_create(&threads[i], NULL, serve, (void *)&id[i])) {
@@ -202,14 +202,14 @@ int createThreadPool() {
         printf("Thread %d created\n", (int)id[i]);
         #endif
     }
-    
+
     id[i]=i;
 
     if (pthread_create(&threads[i], NULL, consoleConnect, (void *)&id[i])) {
         printf("Error creating consoleConnect\n");
         return -1;
     }
-    #if DEBUG 
+    #if DEBUG
     else {
         printf("--- Console Connect created ---\n");
     }
@@ -288,6 +288,7 @@ void *consoleConnect(void *id_ptr) {
 	int err;
 	char command[SIZE_BUF];
 	char operation[SIZE_BUF];
+	char extra[SIZE_BUF];
 
 	#if DEBUG
 	printf("--- Console Connect started ---\n");
@@ -324,6 +325,8 @@ void *consoleConnect(void *id_ptr) {
 			new_config = (config_t*)malloc(sizeof(config_t));
 
 			new_config->port = config->port;
+
+			printf("operation: %s\n", operation);
 
 			//TODO -> check command and change new config
 
@@ -369,7 +372,7 @@ void *serve(void *id_ptr) {
         printf("--- THREAD %ld FREE AGAIN ---\n", threadId);
         availableServingThreads[threadId - 1] = 0;
     }
-    
+
     close(threadRequests[threadId - 1].conn);
 
     #if DEBUG
@@ -454,7 +457,7 @@ void shutdown_server(int op) {
     deleteRequestBuffer(&request_buffer);
   case CLEAN_THREADS:
     joinThreads();
-  /*case CLEAN_SEMAPHORES:
+  case CLEAN_SEMAPHORES:
     destroySemaphores();
   case CLEAN_SHARED_MEMORY:
     destroySharedMemory();
@@ -462,7 +465,7 @@ void shutdown_server(int op) {
     free(config);
     kill(statistics_PID, SIGKILL);
   case FAST_EXIT:
-    break;*/
+    break;
   }
 
   exit(op + 1);

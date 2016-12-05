@@ -306,8 +306,6 @@ void *consoleConnect(void *id_ptr) {
 	while (1) {
 		if (exitThreads == 1) break;
 
-		new_config = (config_t *)malloc(sizeof(config_t));
-
 		// read console command
 		while( (err = read(namedpipe, command, SIZE_BUF * sizeof(char))) != 0);
 		// checks if console command exists or was saved successfully
@@ -323,6 +321,8 @@ void *consoleConnect(void *id_ptr) {
 			#if DEBUG
 			printf("Command read: %s\n", command);
 			#endif
+
+			new_config = (config_t *)malloc(sizeof(config_t));
 
 			sscanf(command, "%s %s", operation, extra);
 

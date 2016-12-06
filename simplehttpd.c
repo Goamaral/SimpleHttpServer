@@ -22,6 +22,14 @@ sem_t startSchedulerSemaphore;
 sem_t *threadSemaphores;
 sem_t requestAvailableSemaphore;
 
+//Under maintenance variable
+int underMaintenance = 0;
+
+//consoleConnect VARIABLES
+//TODO -> create consoleConnect thread and destroy it
+long consoleConnectId = 100;
+pthread_t consoleConnectThreadId;
+
 // SHARED MEMORY
 int shmid;
 int *sharedVar;
@@ -96,24 +104,31 @@ int main(int argc, char **argv) {
 	// Serve requests
 	while (1) {
 		// Accept connection on socket
-		if ((new_conn = accept(socket_conn, (struct sockaddr *)&client_name,
-                           &client_name_len)) == -1) {
-		printf("Error accepting connection\n");
-		shutdown_server(CLEAN_THREADS);
-	}
+		if ((new_conn = accept(socket_conn, (struct sockaddr *)&client_name, &client_name_len)) == -1) {
+			printf("Error accepting connection\n");
+			shutdown_server(CLEAN_THREADS);
+		}
 
-	// Identify new client
-	identify(new_conn);
+		// Identify new client
+		identify(new_conn);
 
-	// Process request
-	if (get_request(new_conn) == 1 && strcmp(req_buf, "favicon.ico") != 0) {
-		#if DEBUG
-		printf("org req: %s conn: %d\n", req_buf, new_conn);
-		#endif
+		// Process request
+		if (get_request(new_conn) == 1 && strcmp(req_buf, "favicon.ico") != 0) {
+			#if DEBUG
+			printf("org req: %s conn: %d\n", req_buf, new_conn);
+			#endif
 
-		// Unlock request buffer
-		sem_wait(&requestBufferSemaphore);
-		add_request(request_buffer, new_conn, req_buf);
+			//check if server is under maintenance
+			if( underMaintenance ) {
+				printf("Reloading new configurations or server under maintenance\n");
+				send_page(new_conn, "server_maintenance.html");
+				close(new_conn);
+				continue;
+			}
+
+			// Unlock request buffer
+			sem_wait(&requestBufferSemaphore);
+			add_request(request_buffer, new_conn, req_buf);
 
 		#if DEBUG
 		printf("Added request\n");
@@ -121,7 +136,7 @@ int main(int argc, char **argv) {
 		print_request_buffer(request_buffer);
 		#endif
 
-		// Increases number of available threads
+		// Requests addded to the buffer
 		sem_post(&requestAvailableSemaphore);
 
 		// Unlocks request buffer
@@ -171,12 +186,25 @@ int checkFreeThread() {
   return -1;
 }
 
+int createConsoleConnectThread() {
+	consoleConnectId = 100;
+	if (pthread_create(&consoleConnectThreadId, NULL, consoleConnect, (void *)&consoleConnectId)) {
+			printf("Error creating consoleConnect\n");
+			return -1;
+	}
+	#if DEBUG
+	else {
+			printf("--- Console Connect created ---\n");
+	}
+	#endif
+}
+
 int createThreadPool() {
     int i = 0;
 
     threadRequests = (serve_msg_t *)malloc((config->threadpool) * sizeof(serve_msg_t));
-    id = (long *)malloc((config->threadpool + 2) * sizeof(long));
-    threads = (pthread_t *)malloc((config->threadpool + 2) * sizeof(pthread_t));
+    id = (long *)malloc((config->threadpool + 1) * sizeof(long));
+    threads = (pthread_t *)malloc((config->threadpool + 1) * sizeof(pthread_t));
     availableServingThreads = (int *)malloc((config->threadpool) * sizeof(int));
 
     id[i]=i;
@@ -202,18 +230,6 @@ int createThreadPool() {
         printf("Thread %d created\n", (int)id[i]);
         #endif
     }
-
-    id[i]=i;
-
-    if (pthread_create(&threads[i], NULL, consoleConnect, (void *)&id[i])) {
-        printf("Error creating consoleConnect\n");
-        return -1;
-    }
-    #if DEBUG
-    else {
-        printf("--- Console Connect created ---\n");
-    }
-    #endif
 
     for (i = 0; i < config->threadpool; ++i) {
         availableServingThreads[i] = 0;
@@ -289,6 +305,9 @@ void *consoleConnect(void *id_ptr) {
 	char command[SIZE_BUF];
 	char operation[SIZE_BUF];
 	char extra[SIZE_BUF];
+	char *token;
+	char separator[2]= " ";
+	int i;
 
 	#if DEBUG
 	printf("--- Console Connect started ---\n");
@@ -322,19 +341,45 @@ void *consoleConnect(void *id_ptr) {
 			printf("Command read: %s\n", command);
 			#endif
 
-			new_config = (config_t *)malloc(sizeof(config_t));
+			//Stop listening to ctrl + c
+			signal(SIGINT, SIG_IGN);
 
-			sscanf(command, "%s %s", operation, extra);
+			underMaintenance = 1;
+			joinThreads();
+			destroySemaphores();
 
-			new_config = (config_t*)malloc(sizeof(config_t));
+			sscanf(command, "%s %[^\n\t]", operation, extra);
 
-			new_config->port = config->port;
+			if(!strcmp(operation,"schedule")) {
+				strcpy(config->scheduling, extra);
+			}
 
-			printf("operation: %s\n", operation);
+			if(!strcmp(operation,"threadpool")) {
+				config->threadpool = atoi(extra);
+			}
+
+			if(!strcmp(operation,"allowed")) {
+				token = strtok(extra, separator);
+				i=0;
+				while(token!=NULL && i<MAX_ALLOWED) {
+					strcpy(config->allowed[i], token);
+					++i;
+					token = strtok(NULL, separator);
+				}
+			}
+
+			printf("Mate changes applied, gotta go :3\n");
+			close(new_conn);
+	    close(socket_conn);
+	    deleteRequestBuffer(&request_buffer);
+		  //joinThreads();
+		  //destroySemaphores();
+		  destroySharedMemory();
+		  free(config);
+		  kill(statistics_PID, SIGKILL);
 
 			//TODO -> check command and change new config
 
-			free(new_config);
 		}
 	}
 

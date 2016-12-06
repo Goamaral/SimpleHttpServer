@@ -7,7 +7,7 @@
 //TODO -> add command syntax check
 
 void printHelp() {
-	char helpCommands[N_HELPERS][SIZE_BUF] = {" schedule <mode>\n\t-> mormal\n\t-> compressed\n\t-> static", " threadpool <number>", " allowed <filenames...>"};
+	char helpCommands[N_HELPERS][SIZE_BUF] = {" schedule <mode>\n\t-> normal\n\t-> compressed\n\t-> static", " threadpool <number>", " allowed <filenames...>"};
 	int i = 0;
 
 	while(i<N_HELPERS) {
@@ -69,7 +69,7 @@ int main() {
 			if( write(namedpipe, "", SIZE_BUF * sizeof(char)) == -1 ) {
 				printf("Error writting on pipe");
 			}
-			
+
 			// close pipe
 			if( close(namedpipe) == -1 ) {
 				printf("Couldnt close pipe\n");

@@ -65,3 +65,4 @@ void shutdown_server(int option);
 int read_line(int socket, int n);
 int createSemaphores();
 void destroySemaphores();
+int createConsoleConnectThread();

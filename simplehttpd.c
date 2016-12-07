@@ -2,7 +2,6 @@
 // TODO -> insert baby protection
 // TODO -> assign ctrl + c signal to statistics process
 // TODO -> create othre type of schedules
-// TODO -> separate create/join scheduler and console from other threads
 
 // REQUEST BUFFER
 request_t *request;
@@ -48,6 +47,7 @@ pid_t statistics_PID;
 
 // SCHEDULER VARIABLES
 int exitThreads;
+int exitConsoleThread;
 int *availableServingThreads;
 
 int main(int argc, char **argv) {
@@ -83,8 +83,13 @@ int main(int argc, char **argv) {
 	}
 
 	exitThreads = 0;
+	exitConsoleThread = 0;
 
-	if (createThreadPool() == -1) {
+	if(createConsoleConnectThread() == -1) {
+		shutdown_server(CLEAN_SEMAPHORES);
+	}
+
+	if(createThreadPool() == -1) {
 		shutdown_server(CLEAN_THREADS);
 	}
 
@@ -187,7 +192,6 @@ int checkFreeThread() {
 }
 
 int createConsoleConnectThread() {
-	consoleConnectId = 100;
 	if (pthread_create(&consoleConnectThreadId, NULL, consoleConnect, (void *)&consoleConnectId)) {
 			printf("Error creating consoleConnect\n");
 			return -1;
@@ -197,6 +201,7 @@ int createConsoleConnectThread() {
 			printf("--- Console Connect created ---\n");
 	}
 	#endif
+	return 0;
 }
 
 int createThreadPool() {
@@ -237,6 +242,15 @@ int createThreadPool() {
     return 0;
 }
 
+void joinConsoleThread() {
+	exitConsoleThread = 1;
+	pthread_join(consoleConnectThreadId, NULL);
+
+	#if DEBUG
+	printf("Console Connect thread ended\n");
+	#endif
+}
+
 void joinThreads() {
     int i;
     exitThreads = 1;
@@ -249,7 +263,7 @@ void joinThreads() {
     }
 
     // Wait for all threads to complete
-    for (i = 0; i < config->threadpool + 2; ++i) {
+    for (i = 0; i < config->threadpool + 1; ++i) {
         pthread_join(threads[i], NULL);
     }
 
@@ -267,7 +281,7 @@ void *scheduler(void *id_ptr) {
     printf("--- Started scheduler ---\n");
     #endif
 
-    while (exitThreads != 1) {
+    while (1) {
         sem_wait(&requestAvailableSemaphore);
         sem_wait(&requestBufferSemaphore);
         if(exitThreads==1) break;
@@ -290,6 +304,8 @@ void *scheduler(void *id_ptr) {
                 close(request->conn);
             }
         }
+				//Always serve request then exit
+				if(exitThreads == 1) break;
     }
 
     #if DEBUG
@@ -323,7 +339,7 @@ void *consoleConnect(void *id_ptr) {
 	#endif
 
 	while (1) {
-		if (exitThreads == 1) break;
+		if (exitConsoleThread == 1) break;
 
 		// read console command
 		while( (err = read(namedpipe, command, SIZE_BUF * sizeof(char))) != 0);
@@ -343,10 +359,7 @@ void *consoleConnect(void *id_ptr) {
 
 			//Stop listening to ctrl + c
 			signal(SIGINT, SIG_IGN);
-
 			underMaintenance = 1;
-			joinThreads();
-			destroySemaphores();
 
 			sscanf(command, "%s %[^\n\t]", operation, extra);
 
@@ -355,7 +368,14 @@ void *consoleConnect(void *id_ptr) {
 			}
 
 			if(!strcmp(operation,"threadpool")) {
+				joinThreads();
+				destroySemaphores();
+				#if DEBUG
+				printf("Will change threadpool value");
+				#endif
 				config->threadpool = atoi(extra);
+				createSemaphores();
+				createThreadPool();
 			}
 
 			if(!strcmp(operation,"allowed")) {
@@ -368,15 +388,17 @@ void *consoleConnect(void *id_ptr) {
 				}
 			}
 
-			printf("Mate changes applied, gotta go :3\n");
-			close(new_conn);
-	    close(socket_conn);
-	    deleteRequestBuffer(&request_buffer);
-		  //joinThreads();
-		  //destroySemaphores();
-		  destroySharedMemory();
-		  free(config);
-		  kill(statistics_PID, SIGKILL);
+			printf("Changes applied\n");
+
+			underMaintenance = 0;
+
+			signal(SIGINT, catch_ctrlc);
+
+			exitThreads=0;
+
+			//shutdown_server(CLEAN_SERVER);
+
+			//exit(0);
 
 			//TODO -> check command and change new config
 
@@ -420,9 +442,10 @@ void *serve(void *id_ptr) {
 
         printf("--- THREAD %ld FREE AGAIN ---\n", threadId);
         availableServingThreads[threadId - 1] = 0;
-    }
 
-    close(threadRequests[threadId - 1].conn);
+				//Always serve request then exit
+				if(exitThreads == 1) break;
+    }
 
     #if DEBUG
     printf("Served thread %ld\n", threadId);
@@ -497,27 +520,28 @@ void catch_ctrlc(int sig) {
 
 // Closes socket before closing
 void shutdown_server(int op) {
-  printf("--- Server terminating ---\n");
+	printf("--- Server terminating ---\n");
 
-  switch (op) {
-  case CLEAN_SERVER:
-    close(new_conn);
-    close(socket_conn);
-    deleteRequestBuffer(&request_buffer);
-  case CLEAN_THREADS:
-    joinThreads();
-  case CLEAN_SEMAPHORES:
-    destroySemaphores();
-  case CLEAN_SHARED_MEMORY:
-    destroySharedMemory();
-  case FAST_EXIT_2:
-    free(config);
-    kill(statistics_PID, SIGKILL);
-  case FAST_EXIT:
-    break;
-  }
+	switch(op) {
+		case CLEAN_SERVER:
+			close(new_conn);
+			close(socket_conn);
+			deleteRequestBuffer(&request_buffer);
+			joinConsoleThread();
+		case CLEAN_THREADS:
+			joinThreads();
+		case CLEAN_SEMAPHORES:
+			destroySemaphores();
+		case CLEAN_SHARED_MEMORY:
+			destroySharedMemory();
+		case FAST_EXIT_2:
+			free(config);
+			kill(statistics_PID, SIGKILL);
+		case FAST_EXIT:
+			break;
+	}
 
-  exit(op + 1);
+	exit(op + 1);
 }
 
 int read_line(int socket, int n) {

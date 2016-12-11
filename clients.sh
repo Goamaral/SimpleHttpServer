@@ -1,7 +1,7 @@
 #!/bin/bash
 max=10000
 ip=localhost
-port=8081
+port=8080
 sleep_time=0
 
 for (( i=1; i<=max; ++i )) do

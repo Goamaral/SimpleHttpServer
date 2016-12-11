@@ -18,29 +18,44 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-#include <time.h>
+#include <sys/time.h>
 #include <unistd.h>
+#include <sys/mman.h>
 
-#define DEBUG 1 // when on prints debugging messages
+//#define DEBUG 1 // when on prints debugging messages
 //#define SLEEP 1 // when on makes threads take longer to serve
+//#define DEBUG_THREAD 1 // when on prints debugging messages for threads
+#define DEBUG_STATISTICS 1 // when on prints stat debugging messages
 
 #define SIZE_BUF 1024
-#define FAST_EXIT 0
-#define FAST_EXIT_2 1
-#define CLEAN_SHARED_MEMORY 2
-#define CLEAN_SEMAPHORES 3
-#define CLEAN_THREADS 4
+
+#define CONFIG 0
+#define CLEAN_SHARED_MEMORY 1
+#define CLEAN_SEMAPHORES 2
+#define CLEAN_THREADS 3
+#define STATS 4
 #define CLEAN_SERVER 5
+#define FAST_EXIT 6
 
 #define PIPE_NAME "Server To Config Console Pipe"
 
 typedef struct {
-  int id;
-  int conn;
-  char requiredFile[SIZE_BUF];
-  time_t timeGetRequest;
+	int id;
+	int conn;
+	char requiredFile[SIZE_BUF];
+	struct timeval timeGetRequest;
+	struct timeval timeProcessed;
 } serve_msg_t;
 
+typedef struct {
+	char requiredFile[SIZE_BUF];
+	struct timeval timeGetRequest;
+	struct timeval timeProcessed;
+	int treated;
+	sem_t semaphore;
+} shvar_t;
+
+int allowedFile(char *file);
 int createNamedPipe();
 int createThreadPool();
 void *serve(void *id_ptr);
@@ -66,3 +81,4 @@ int read_line(int socket, int n);
 int createSemaphores();
 void destroySemaphores();
 int createConsoleConnectThread();
+void strupr(char s[]);

@@ -895,7 +895,7 @@ void send_page(int socket, char req_buf[SIZE_BUF]) {
 			strncpy(fileName, unzippedName, strlen(unzippedName) - 5); // index
 			sprintf(zippedFullPath, "%s%s", path, req_buf); // htdocs/index.html.gz
 			sprintf(buf_tmp, "%s%s", path, unzippedName);   // htdocs/index.html
-			sprintf(command, "gunzip -k -f %s", zippedFullPath);
+			sprintf(command, "gunzip -f %s", zippedFullPath);
 			system(command);
 			compressed = 1;
 		}
@@ -915,7 +915,7 @@ void send_page(int socket, char req_buf[SIZE_BUF]) {
 
 	if (compressed == 1) {
 		// If a compressed file has been required, delete it after sent
-		sprintf(command, "rm %s%s", path, unzippedName); // htdocs/index.html
+		sprintf(command, "gzip %s%s", path, unzippedName); // htdocs/index.html
 		system(command);
 	}
 

@@ -1,3 +1,7 @@
+//Gonçalo Oliveira Amaral	2015249122 Quase todo o projecto
+//Yushchynskyy Artem	2015251647	Apenas participou na primeira meta
+
+#define _GNU_SOURCE
 #include "config.h"
 #include "request.h"
 #include <arpa/inet.h>
@@ -48,6 +52,7 @@ typedef struct {
 } serve_msg_t;
 
 typedef struct {
+	char type[SIZE_BUF];
 	char requiredFile[SIZE_BUF];
 	struct timeval timeGetRequest;
 	struct timeval timeProcessed;
@@ -55,6 +60,9 @@ typedef struct {
 	sem_t semaphore;
 } shvar_t;
 
+
+void catch_ctrlc_stats(int sig);
+void shutdown_stats();
 int allowedFile(char *file);
 int createNamedPipe();
 int createThreadPool();

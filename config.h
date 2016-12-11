@@ -1,3 +1,6 @@
+//Gonçalo Oliveira Amaral	2015249122 Quase todo o projecto
+//Yushchynskyy Artem	2015251647	Apenas participou na primeira meta
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

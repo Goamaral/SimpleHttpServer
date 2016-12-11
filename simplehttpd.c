@@ -1,6 +1,7 @@
+//Gonçalo Oliveira Amaral	2015249122 Quase todo o projecto
+//Yushchynskyy Artem	2015251647	Apenas participou na primeira meta
+
 #include "simplehttpd.h"
-// TODO -> insert baby protection
-// TODO -> assign ctrl + c signal to statistics process
 
 // REQUEST BUFFER
 request_t *request;
@@ -40,8 +41,13 @@ long *id;
 pthread_t *threads;
 serve_msg_t *threadRequests;
 
-// STATISTICS PROCESS PID
+// STATISTICS PROCESS PID and exit variable
 pid_t statistics_PID;
+int exitStats = 0;
+int fd_stats;
+char *addr_stats;
+int len_stats;
+int len_file_stats;
 
 // SCHEDULER VARIABLES
 int exitThreads;
@@ -389,7 +395,7 @@ void *consoleConnect(void *id_ptr) {
 			#endif
 		} else if(!strcmp(command, "")) {
 			#if DEBUG
-			//printf("Command not inserted\n");
+			printf("Command not inserted\n");
 			#endif
 		} else {
 			#if DEBUG
@@ -462,12 +468,6 @@ void strupr(char s[]) {
    }
 }
 
-//Get seconds and microseconds since the Epoch
-double timedifference_msec(struct timeval t0, struct timeval t1)
-{
-    return (t1.tv_sec - t0.tv_sec) * 1000.0f + (t1.tv_usec - t0.tv_usec) / 1000.0f;
-}
-
 void *serve(void *id_ptr) {
 	long threadId = *((long *)id_ptr);
 
@@ -513,23 +513,226 @@ void *serve(void *id_ptr) {
 	pthread_exit(NULL);
 }
 
-// TO DO -> create statistics function
+void print_stats(int sig) {
+	int i;
+	int counter = 0;
+	char buf[SIZE_BUF];
+	int n_compressed = 0;
+	int n_static = 0;
+	char type[SIZE_BUF];
+	int seconds1, seconds2;
+	float mseconds1, mseconds2;
+	float compressed_mseconds_sum = 0, static_mseconds_sum = 0;
+	float diff;
+	const char separator[2] = "|";
+	char *token;
+	char date1[SIZE_BUF], date2[SIZE_BUF];
+
+	for(i=strlen("--- SERVER LOGS ---\n");i<len_stats;++i) {
+		if(addr_stats[i]=='\n' || addr_stats[i]=='\0') {
+			buf[counter] = '\0';
+			counter = 0;
+
+			token = strtok(buf, separator);//type
+			strcpy(type, token);
+
+			token = strtok(NULL, separator);//filename
+			token = strtok(NULL, separator);//date1
+			strcpy(date1, token);
+			token = strtok(NULL, separator);
+			strcpy(date2, token);
+
+			sscanf(date1, "%*d:%*d:%d %f", &seconds1, &mseconds1);
+			sscanf(date2, "%*d:%*d:%d %f", &seconds2, &mseconds2);
+
+			diff = (seconds2*1000 + mseconds2) - (seconds1*1000 + mseconds1);
+			if(!strcmp("compressed", type)) {
+				compressed_mseconds_sum += diff;
+				n_compressed += 1;
+			} else {
+				static_mseconds_sum += diff;
+				n_static += 1;
+			}
+		} else {
+			buf[counter]=addr_stats[i];
+			counter+=1;
+		}
+	}
+
+	printf("Numero de pedidos estaticos: %d\n", n_static);
+	printf("Numero de pedidos comprimidos: %d\n", n_compressed);
+	printf("Tempo medio para servir pedidos estaticos: %f milisegundos\n", static_mseconds_sum / (float)n_static);
+	printf("Tempo medio para servir pedidos comprimidos: %f milisegundos\n", compressed_mseconds_sum / (float)n_compressed);
+}
+
+void reset_stats(int sig) {
+	struct stat st;
+	FILE *err_file;
+
+	if( munmap(addr_stats,len_stats) == -1 ) {
+		perror("nunmap error");
+		return;
+	}
+	close(fd_stats);
+
+	err_file = fopen("server.log", "w+");
+	fputs("--- SERVER LOGS ---\n", err_file);
+	fclose(err_file);
+
+	if( (fd_stats = open("server.log", O_RDWR | O_APPEND)) == -1) {
+		perror("open");
+		return;
+	}
+
+	if (fstat(fd_stats, &st) == -1) {
+		perror("fstat error");
+		return;
+	}
+
+	len_file_stats = st.st_size;
+	len_stats = len_file_stats;
+
+	addr_stats = mmap(NULL, len_file_stats, PROT_WRITE|PROT_READ, MAP_SHARED, fd_stats, 0);
+
+	if(addr_stats == MAP_FAILED) {
+		perror("nmap error: ");
+		return;
+	}
+
+	return;
+}
+
 void statistics() {
+	struct stat st;
+	FILE *err_file;
+	char export[SIZE_BUF];
+	const char separator[2] = ".";
+	char *token;
+	char ext[SIZE_BUF];
+	char date1[SIZE_BUF];
+	time_t time1;
+	struct tm *timeinfo1;
+	char date2[SIZE_BUF];
+	time_t time2;
+	struct tm *timeinfo2;
+
+	signal(SIGINT, catch_ctrlc_stats);
+	signal(SIGUSR1, print_stats);
+	signal(SIGUSR2, reset_stats);
+
 	printf("Statistics PID: %d\n", getpid());
+
 	sem_wait(&(sharedVar->semaphore));
 	sharedVar->treated = 1;
 	sem_post(&(sharedVar->semaphore));
 
+	if( (fd_stats = open("server.log", O_RDWR | O_APPEND)) == -1) {
+		if(errno == 2) {
+			err_file = fopen("server.log", "w+");
+			fputs("--- SERVER LOGS ---\n", err_file);
+			fclose(err_file);
+			if( (fd_stats = open("server.log", O_RDWR | O_APPEND)) == -1) {
+				printf("FILE ERROR %s\n", strerror(errno));
+				return;
+			}
+		} else {
+			printf("FILE ERROR %s\n", strerror(errno));
+			return;
+		}
+	}
+
+	if (fstat(fd_stats, &st) == -1) {
+		perror("fstat error");
+		close(fd_stats);
+		return;
+	}
+
+	len_file_stats = st.st_size;
+	len_stats = len_file_stats;
+
+	addr_stats = mmap(NULL, len_file_stats, PROT_WRITE|PROT_READ, MAP_SHARED, fd_stats, 0);
+
+	if(addr_stats == MAP_FAILED) {
+		perror("nmap error: ");
+		close(fd_stats);
+		return;
+	}
+
 	while(1) {
 		sem_wait(&(sharedVar->semaphore));
+		if(exitStats == 1) break;
 		if(sharedVar->treated == 0){
+			token = strtok(sharedVar->requiredFile, separator);
+
+			while( token != NULL ) {
+				strcpy(ext, token);
+				token = strtok(NULL, separator);
+			}
+
+			if(!strcmp("gz", ext)) {
+				strcpy(sharedVar->type, "compressed" );
+			} else {
+				strcpy(sharedVar->type, "static" );
+			}
+
+			time1 = sharedVar->timeGetRequest.tv_sec;
+			time2 = sharedVar->timeProcessed.tv_sec;
+
+			timeinfo1 = localtime(&time1);
+			timeinfo2 = localtime(&time2);
+
+			strftime(date1, SIZE_BUF, "%H:%M:%S", timeinfo1);
+			strftime(date2, SIZE_BUF, "%H:%M:%S", timeinfo2);
+
+			sprintf(export, "%s|%s|%s %.2f|%s %.2f\n",
+				sharedVar->type,
+				sharedVar->requiredFile,
+				date1,
+				(double)sharedVar->timeGetRequest.tv_usec / 1000,
+				date2,
+				(double)sharedVar->timeProcessed.tv_usec / 1000);
+
 			#if DEBUG_STATISTICS
-			printf("sharedVar info: %s, %fs %fus, %fs %fus\n", sharedVar->requiredFile, (double)sharedVar->timeGetRequest.tv_sec, (double)sharedVar->timeGetRequest.tv_usec, (double)sharedVar->timeProcessed.tv_sec, (double)sharedVar->timeProcessed.tv_usec);
+			printf("%s\n", export);
 			#endif
+
+			len_stats = len_file_stats;
+			len_file_stats += strlen(export);
+			if (ftruncate(fd_stats, len_file_stats) != 0)
+			{
+				perror("ftruncate error");
+				shutdown_stats();
+				return;
+			}
+
+			addr_stats = mremap(addr_stats, len_stats, len_file_stats, MREMAP_MAYMOVE);
+
+			if(addr_stats == MAP_FAILED) {
+				perror("mremap error: ");
+				shutdown_stats();
+				return;
+			}
+
+			memcpy(addr_stats+len_stats, export, len_file_stats - len_stats);
+
 			sharedVar->treated = 1;
 		}
 		sem_post(&(sharedVar->semaphore));
 	}
+
+	shutdown_stats();
+	return;
+}
+
+void catch_ctrlc_stats(int sig) {
+	sem_post(&(sharedVar->semaphore));
+	exitStats = 1;
+	shutdown_stats();
+}
+
+void shutdown_stats() {
+	if( munmap(addr_stats,len_stats) == -1 ) perror("nunmap error");
+	close(fd_stats);
 }
 
 int createSemaphores() {
@@ -598,6 +801,7 @@ void catch_ctrlc(int sig) {
 
 // Closes socket before closing
 void shutdown_server(int op) {
+	int status;
 	printf("--- Server terminating ---\n");
 
 	switch(op) {
@@ -607,7 +811,8 @@ void shutdown_server(int op) {
 			deleteRequestBuffer(&request_buffer);
 			joinConsoleThread();
 		case STATS:
-			kill(statistics_PID, SIGKILL);
+			waitpid(statistics_PID, &status, WNOHANG|WUNTRACED);
+			printf("Statistics is out\n");
 		case CLEAN_THREADS:
 			joinThreads();
 		case CLEAN_SEMAPHORES:

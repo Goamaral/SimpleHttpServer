@@ -1,8 +1,9 @@
+//Gonçalo Oliveira Amaral	2015249122 Quase todo o projecto
+//Yushchynskyy Artem	2015251647	Apenas participou na primeira meta
+
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
-
-// TODO -> create other type of schedules
 
 #define	SERVER_STRING 	"Server: simpleserver/0.1.0\r\n"
 #define HEADER_1	"HTTP/1.0 200 OK\r\n"
@@ -40,12 +41,13 @@ request_t *createRequestBuffer(){
 
 void remove_request(request_t **request_buffer, request_t **request_cpy, char scheduling[SIZE_BUF]) {
 	request_t * next_node = NULL;
-	//request_t * current_node = (*request_buffer);
-	//request_t * prev_node= NULL;
+	request_t * current_node = (*request_buffer);
+	request_t * prev_node = NULL;
+	char buf[SIZE_BUF];
 
-	//char separator[2] = ".";
-	//char *token;
-	//char ext[SIZE_BUF];
+	char separator[2] = ".";
+	char *token;
+	char ext[SIZE_BUF];
 
 	if (*request_buffer == NULL || (*request_buffer)->conn == -1) {
 		*request_cpy = NULL;
@@ -60,17 +62,25 @@ void remove_request(request_t **request_buffer, request_t **request_cpy, char sc
 		if( (next_node = (*request_buffer)->next) == NULL ) {
 			next_node = createRequestBuffer();
 		}
-    	*request_cpy = *request_buffer;
+		*request_cpy = *request_buffer;
 		(*request_cpy)->next=NULL;
 		*request_buffer = next_node;
 		return;
 	}
 
 	if(!strcmp(scheduling,"COMPRESSED")) {
-		//TODO - > WORK IN PROGRESS
-		/*printf("COMPRESSED\n");
+		//SO ha um no
+		if( (next_node = (*request_buffer)->next) == NULL ) {
+			next_node = createRequestBuffer();
+		}
+		*request_cpy = *request_buffer;
+		(*request_cpy)->next=NULL;
+		*request_buffer = next_node;
+		return;
+
 		while( (next_node = current_node->next) != NULL ) {
-			token = strtok(	(*request_buffer)->requiredFile, separator);
+			strcpy(buf, current_node->requiredFile);
+			token = strtok(buf, separator);
 
 			while( token != NULL ) {
 				strcpy(ext, token);
@@ -79,27 +89,96 @@ void remove_request(request_t **request_buffer, request_t **request_cpy, char sc
 			}
 
 			if(!strcmp(ext,"gz")) {
-
+				*request_cpy = current_node;
+				prev_node->next = next_node;
+				(*request_cpy)->next = NULL;
+				return;
 			}
 
-			*request_buffer = next_node;
+			prev_node = current_node;
+			current_node = next_node;
 		}
 
-		if(next_node == NULL) {
-			token = strtok(	(*request_buffer)->requiredFile, separator);
 
-			while( token != NULL ) {
-				strcpy(ext, token);
-				token = strtok(NULL, separator);
-			}
+		//ultimo no
+		strcpy(buf, current_node->requiredFile);
+		token = strtok(buf, separator);
 
+		while( token != NULL ) {
+			strcpy(ext, token);
+			printf( " %s\n", token );
+			token = strtok(NULL, separator);
 		}
 
-		exit(0);*/
+		if(!strcmp(ext,"gz")) {
+			*request_cpy = current_node;
+			(*request_cpy)->next = NULL;
+			prev_node->next = NULL;
+			return;
+		}
+
+		//Se nao houverem ficheiros comprimidos
+		*request_cpy = *request_buffer;
+		(*request_cpy)->next = NULL;
+		next_node = (*request_cpy)->next;
+		*request_buffer = next_node;
+		return;
 	}
 
 	if(!strcmp(scheduling,"STATIC")) {
+		//SO ha um no
+		if( (next_node = (*request_buffer)->next) == NULL ) {
+			next_node = createRequestBuffer();
+		}
+		*request_cpy = *request_buffer;
+		(*request_cpy)->next=NULL;
+		*request_buffer = next_node;
+		return;
 
+		while( (next_node = current_node->next) != NULL ) {
+			strcpy(buf, current_node->requiredFile);
+			token = strtok(buf, separator);
+
+			while( token != NULL ) {
+				strcpy(ext, token);
+				printf( " %s\n", token );
+				token = strtok(NULL, separator);
+			}
+
+			if(!strcmp(ext,"html")) {
+				*request_cpy = current_node;
+				(*request_cpy)->next = NULL;
+				prev_node->next = next_node;
+				return;
+			}
+
+			prev_node = current_node;
+			current_node = next_node;
+		}
+
+
+		//ultimo no
+		strcpy(buf, current_node->requiredFile);
+		token = strtok(buf, separator);
+
+		while( token != NULL ) {
+			strcpy(ext, token);
+			printf( " %s\n", token );
+			token = strtok(NULL, separator);
+		}
+
+		if(!strcmp(ext,"html")) {
+			*request_cpy = current_node;
+			(*request_cpy)->next=NULL;
+			prev_node->next = NULL;
+			return;
+		}
+
+		*request_cpy = *request_buffer;
+		(*request_cpy)->next = NULL;
+		next_node = (*request_cpy)->next;
+		*request_buffer = next_node;
+		return;
 	}
 }
 

@@ -1,4 +1,4 @@
 SERVERPORT=8081
 SCHEDULING=NORMAL
 THREADPOOL=5
-ALLLOWED=about.html;index.html
+ALLLOWED=about.html;index.html.gz;
